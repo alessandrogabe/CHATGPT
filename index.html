@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0b141a">
-<title>AudioChat 4.7 — diagnostica nei dettagli</title>
+<title>AudioChat 4.8 — uscita altoparlante</title>
 <style>
 :root{
   --bg:#0b141a;--panel:#111b21;--panel2:#202c33;--panel3:#263841;
@@ -115,7 +115,7 @@ radial-gradient(circle at 30% 30%,#29404a 1px,transparent 1px);background-size:a
     <div class="brand">
       <div class="brand-title">
         <div class="logo">AC</div>
-        <div><h1>AudioChat 4.7</h1><small>coda persistente · heartbeat adattivo</small></div>
+        <div><h1>AudioChat 4.8</h1><small>uscita altoparlante · canale selettivo</small></div>
       </div>
       <button class="icon-btn" id="closeSidebar" aria-label="Chiudi">×</button>
     </div>
@@ -199,6 +199,18 @@ radial-gradient(circle at 30% 30%,#29404a 1px,transparent 1px);background-size:a
         <button class="btn danger" id="clearDataBtn">Cancella messaggi e identità</button>
       </div>
       <div class="details-section">
+        <h3>Uscita audio</h3>
+        <div class="details-row">
+          <span id="audioOutputStatus">Uscita predefinita del telefono</span>
+        </div>
+        <div class="details-actions">
+          <button class="btn secondary" id="activateSpeakerBtn">Attiva altoparlante</button>
+          <button class="btn secondary" id="selectOutputBtn">Scegli uscita</button>
+        </div>
+        <small>AudioChat prova a usare l'uscita multimediale. Su Safari iPhone la scelta finale dell'altoparlante resta sotto il controllo di iOS.</small>
+      </div>
+
+      <div class="details-section">
         <h3>Diagnostica</h3>
         <div class="details-row">
           <span>Mostra pannello log</span>
@@ -261,7 +273,7 @@ radial-gradient(circle at 30% 30%,#29404a 1px,transparent 1px);background-size:a
 (() => {
 'use strict';
 
-const VERSION = '4.7.0-diagnostics-menu';
+const VERSION = '4.8.0-speaker-output';
 const BROADCAST = '0000000';
 const MAX_NODES = 5;
 
@@ -305,7 +317,9 @@ const els = {
   volumeInput: $('#volumeInput'), volumeValue: $('#volumeValue'), helloInput: $('#helloInput'),
   clearDataBtn: $('#clearDataBtn'), logPanel: $('#logPanel'),
   showLogToggle: $('#showLogToggle'), copyLogBtn: $('#copyLogBtn'),
-  clearLogBtn: $('#clearLogBtn'), toast: $('#toast')
+  clearLogBtn: $('#clearLogBtn'), activateSpeakerBtn: $('#activateSpeakerBtn'),
+  selectOutputBtn: $('#selectOutputBtn'), audioOutputStatus: $('#audioOutputStatus'),
+  toast: $('#toast')
 };
 
 const stored = safeJson(localStorage.getItem('audiochat4.state'), {});
@@ -365,6 +379,9 @@ const state = {
   lastHeartbeatTxAt: 0,
   queueDb: null,
   queueRestored: false,
+  outputDestination: null,
+  outputAudio: null,
+  outputMode: 'default',
   wakeLock: null
 };
 
@@ -1264,12 +1281,96 @@ function makeParameters(payloadLength) {
     state.ggwave.GGWAVE_OPERATING_MODE_USE_DSS;
   return parameters;
 }
+function updateAudioOutputStatus(text, ok = false) {
+  if (!els.audioOutputStatus) return;
+  els.audioOutputStatus.textContent = text;
+  els.audioOutputStatus.style.color = ok ? '#75e5c9' : '';
+}
+
+async function configureSpeakerOutput(forcePlay = false) {
+  if (!state.context) return false;
+
+  try {
+    // Instradamento WebAudio -> MediaStream -> elemento <audio>.
+    // Sui browser mobili questo segue il percorso di riproduzione multimediale,
+    // normalmente più adatto dell'auricolare telefonico.
+    if (!state.outputDestination) {
+      state.outputDestination = state.context.createMediaStreamDestination();
+    }
+
+    if (!state.outputAudio) {
+      const audio = document.createElement('audio');
+      audio.autoplay = true;
+      audio.playsInline = true;
+      audio.controls = false;
+      audio.volume = 1;
+      audio.style.display = 'none';
+      audio.srcObject = state.outputDestination.stream;
+      document.body.appendChild(audio);
+      state.outputAudio = audio;
+    }
+
+    if (forcePlay || state.outputAudio.paused) {
+      await state.outputAudio.play();
+    }
+
+    state.outputMode = 'media-element';
+    updateAudioOutputStatus('Uscita multimediale attiva', true);
+    log('Uscita audio: MediaStreamDestination → elemento audio.', 'ok');
+    return true;
+  } catch (error) {
+    state.outputMode = 'default';
+    updateAudioOutputStatus('Uscita predefinita del telefono');
+    log(`Uscita multimediale non attivata: ${error.message}`, 'err');
+    return false;
+  }
+}
+
+async function selectAudioOutput() {
+  try {
+    if (!navigator.mediaDevices?.selectAudioOutput) {
+      updateAudioOutputStatus('Selezione uscita non supportata da questo browser');
+      showToast('Su questo browser l’uscita è gestita dal sistema');
+      return;
+    }
+
+    const device = await navigator.mediaDevices.selectAudioOutput();
+
+    if (state.outputAudio?.setSinkId) {
+      await state.outputAudio.setSinkId(device.deviceId);
+      updateAudioOutputStatus(device.label || 'Uscita selezionata', true);
+      showToast('Uscita audio selezionata');
+      log(`Uscita selezionata: ${device.label || device.deviceId}`, 'ok');
+      return;
+    }
+
+    if (state.context?.setSinkId) {
+      await state.context.setSinkId(device.deviceId);
+      updateAudioOutputStatus(device.label || 'Uscita selezionata', true);
+      showToast('Uscita audio selezionata');
+      return;
+    }
+
+    showToast('Il browser non permette di cambiare uscita');
+  } catch (error) {
+    log(`Selezione uscita: ${error.message}`, 'err');
+    showToast('Uscita audio non modificata');
+  }
+}
+
+function outputNode() {
+  return state.outputMode === 'media-element' && state.outputDestination
+    ? state.outputDestination
+    : state.context.destination;
+}
+
 async function initAudio() {
   if (state.context) return;
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) throw new Error('Web Audio API non supportata');
   state.context = new AudioContextClass({sampleRate: 48000});
   await state.context.resume();
+  await configureSpeakerOutput(false);
 
   state.instances.control = state.ggwave.init(makeParameters(CONTROL_SIZE));
   state.instances.short = state.ggwave.init(makeParameters(SHORT_SIZE));
@@ -1318,7 +1419,13 @@ async function startNetwork() {
 
     state.processor.onaudioprocess = onAudio;
     state.mediaSource.connect(state.processor);
-    state.processor.connect(state.context.destination);
+
+    const silentGain = state.context.createGain();
+    silentGain.gain.value = 0;
+    state.processor.connect(silentGain);
+    silentGain.connect(state.context.destination);
+
+    await configureSpeakerOutput(true);
 
     state.running = true;
     state.networkStartedAt = Date.now();
@@ -1362,6 +1469,9 @@ function stopNetwork() {
   if (state.stream) state.stream.getTracks().forEach(track => track.stop());
 
   state.processor = state.mediaSource = state.stream = null;
+  if (state.outputAudio) {
+    try { state.outputAudio.pause(); } catch {}
+  }
   state.nextDirectBeaconAt = 0;
   state.heartbeatBackoff = 0;
   state.txQueue = [];
@@ -1392,12 +1502,9 @@ function onAudio(event) {
   const output = event.outputBuffer.getChannelData(0);
   output.fill(0);
 
-  let sum = 0;
-  for (let index = 0; index < input.length; index++) sum += input[index] * input[index];
-  if (Math.sqrt(sum / input.length) > 0.018) {
-    state.busyUntil = Math.max(state.busyUntil, Date.now() + 150);
-  }
-
+  // Il rumore ambientale generico non rende più il canale occupato.
+  // busyUntil viene aggiornato soltanto dopo un pacchetto AudioChat valido
+  // oppure durante una nostra trasmissione.
   if (state.transmitting) return;
   const raw = convertTypedArray(new Float32Array(input), Int8Array);
   decodeFixed('control', raw, CONTROL_SIZE);
@@ -1409,22 +1516,28 @@ function decodeFixed(channel, raw, size) {
     const result = state.ggwave.decode(state.instances[channel], raw);
     if (!result || !result.length) return;
     const packet = new TextDecoder('utf-8').decode(result);
-    state.busyUntil = Date.now() + 180;
 
     if (channel === 'control') {
       const decoded = unpackControl(packet);
-      if (decoded) handleControl(decoded);
+      if (decoded) {
+        state.busyUntil = Date.now() + 180;
+        handleControl(decoded);
+      }
       return;
     }
 
     const shortControl = channel === 'short' ? unpackShortControl(packet) : null;
     if (shortControl) {
+      state.busyUntil = Date.now() + 180;
       handleShortControl(shortControl);
       return;
     }
 
     const data = unpackData(packet, size);
-    if (data) handleData(data);
+    if (data) {
+      state.busyUntil = Date.now() + 180;
+      handleData(data);
+    }
   } catch (error) {
     log(`Decoder ${channel}: ${error.message}`, 'err');
   }
@@ -1495,7 +1608,7 @@ function transmit(channel, payload, attempt = 1, forceRobust = false) {
 
       const source = state.context.createBufferSource();
       source.buffer = buffer;
-      source.connect(state.context.destination);
+      source.connect(outputNode());
       const duration = buffer.duration * 1000;
       source.onended = () => {
         source.disconnect();
@@ -2301,6 +2414,16 @@ $$('.overlay').forEach(overlay => overlay.addEventListener('click', event => {
 els.showLogToggle.onchange = () => setLogVisibility(els.showLogToggle.checked);
 els.copyLogBtn.onclick = copyLogToClipboard;
 els.clearLogBtn.onclick = clearLogPanel;
+els.activateSpeakerBtn.onclick = async () => {
+  if (!state.context) {
+    showToast('Avvia prima la rete');
+    return;
+  }
+  await state.context.resume();
+  const ok = await configureSpeakerOutput(true);
+  showToast(ok ? 'Uscita multimediale attivata' : 'Uso uscita predefinita');
+};
+els.selectOutputBtn.onclick = selectAudioOutput;
 els.volumeInput.oninput = () => {
   state.volume = Number(els.volumeInput.value);
   els.volumeValue.textContent = state.volume;
@@ -2345,9 +2468,12 @@ persist();
 renderAll();
 restorePersistentQueue();
 setLogVisibility(localStorage.getItem('audiochat.showLog') === '1');
+if (!navigator.mediaDevices?.selectAudioOutput) {
+  els.selectOutputBtn.style.display = 'none';
+}
 setPill(els.modemPill, 'da caricare', 'warn');
 els.guideOverlay.classList.add('open');
-log(`AudioChat ${VERSION} pronto · diagnostica nei dettagli`);
+log(`AudioChat ${VERSION} pronto · rumore generico ignorato · uscita multimediale`);
 })();
 </script>
 </body>
