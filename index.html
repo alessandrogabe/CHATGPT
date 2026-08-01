@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0b141a">
-<title>AudioChat 4.8 — uscita altoparlante</title>
+<title>AudioChat 5.0 — ricezione iOS</title>
 <style>
 :root{
   --bg:#0b141a;--panel:#111b21;--panel2:#202c33;--panel3:#263841;
@@ -115,7 +115,7 @@ radial-gradient(circle at 30% 30%,#29404a 1px,transparent 1px);background-size:a
     <div class="brand">
       <div class="brand-title">
         <div class="logo">AC</div>
-        <div><h1>AudioChat 4.8</h1><small>uscita altoparlante · canale selettivo</small></div>
+        <div><h1>AudioChat 5.0</h1><small>ricezione iOS stabile · canale selettivo</small></div>
       </div>
       <button class="icon-btn" id="closeSidebar" aria-label="Chiudi">×</button>
     </div>
@@ -273,7 +273,7 @@ radial-gradient(circle at 30% 30%,#29404a 1px,transparent 1px);background-size:a
 (() => {
 'use strict';
 
-const VERSION = '4.8.0-speaker-output';
+const VERSION = '5.0.0-ios-rx-fix';
 const BROADCAST = '0000000';
 const MAX_NODES = 5;
 
@@ -382,6 +382,10 @@ const state = {
   outputDestination: null,
   outputAudio: null,
   outputMode: 'default',
+  rxCallbackCount: 0,
+  rxLastCallbackAt: 0,
+  rxLastLevel: 0,
+  rxWatchdogTimer: null,
   wakeLock: null
 };
 
@@ -420,6 +424,13 @@ function nowTime(timestamp = Date.now()) {
   return new Date(timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
 }
 function randomBetween(min, max) { return min + Math.random() * (max - min); }
+
+function isIOSLike() {
+  const platform = navigator.userAgentData?.platform || navigator.platform || '';
+  const ua = navigator.userAgent || '';
+  return /iPhone|iPad|iPod/i.test(ua) ||
+    (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
 
 function stableIdFraction(id = state.id) {
   let hash = 2166136261;
@@ -1290,10 +1301,17 @@ function updateAudioOutputStatus(text, ok = false) {
 async function configureSpeakerOutput(forcePlay = false) {
   if (!state.context) return false;
 
+  // Su iOS il passaggio WebAudio -> MediaStream -> <audio> può introdurre
+  // buffering, interruzioni e riavvii della pipeline. Si usa quindi
+  // direttamente AudioContext.destination.
+  if (isIOSLike()) {
+    state.outputMode = 'direct';
+    updateAudioOutputStatus('Uscita Web Audio diretta (iOS)', true);
+    log('iOS rilevato: uscita diretta AudioContext.destination.', 'ok');
+    return true;
+  }
+
   try {
-    // Instradamento WebAudio -> MediaStream -> elemento <audio>.
-    // Sui browser mobili questo segue il percorso di riproduzione multimediale,
-    // normalmente più adatto dell'auricolare telefonico.
     if (!state.outputDestination) {
       state.outputDestination = state.context.createMediaStreamDestination();
     }
@@ -1319,18 +1337,23 @@ async function configureSpeakerOutput(forcePlay = false) {
     log('Uscita audio: MediaStreamDestination → elemento audio.', 'ok');
     return true;
   } catch (error) {
-    state.outputMode = 'default';
-    updateAudioOutputStatus('Uscita predefinita del telefono');
-    log(`Uscita multimediale non attivata: ${error.message}`, 'err');
-    return false;
+    state.outputMode = 'direct';
+    updateAudioOutputStatus('Uscita Web Audio diretta', true);
+    log(`Fallback uscita diretta: ${error.message}`, 'err');
+    return true;
   }
 }
 
 async function selectAudioOutput() {
+  if (isIOSLike()) {
+    showToast('Su iPhone l’uscita è gestita da iOS');
+    return;
+  }
+
   try {
     if (!navigator.mediaDevices?.selectAudioOutput) {
-      updateAudioOutputStatus('Selezione uscita non supportata da questo browser');
-      showToast('Su questo browser l’uscita è gestita dal sistema');
+      updateAudioOutputStatus('Selezione uscita non supportata');
+      showToast('L’uscita è gestita dal sistema');
       return;
     }
 
@@ -1359,27 +1382,87 @@ async function selectAudioOutput() {
 }
 
 function outputNode() {
-  return state.outputMode === 'media-element' && state.outputDestination
-    ? state.outputDestination
-    : state.context.destination;
+  if (isIOSLike() || state.outputMode !== 'media-element' || !state.outputDestination) {
+    return state.context.destination;
+  }
+  return state.outputDestination;
+}
+
+function freeModemInstances() {
+  if (!state.ggwave) return;
+  for (const key of ['control', 'short', 'long']) {
+    const instance = state.instances[key];
+    if (!instance) continue;
+    try { state.ggwave.free(instance); } catch {}
+    state.instances[key] = null;
+  }
+}
+
+function createModemInstances() {
+  freeModemInstances();
+
+  const control = state.ggwave.init(makeParameters(CONTROL_SIZE));
+  const short = state.ggwave.init(makeParameters(SHORT_SIZE));
+  const long = state.ggwave.init(makeParameters(LONG_SIZE));
+
+  if (!control || !short || !long) {
+    for (const instance of [control, short, long]) {
+      try { if (instance) state.ggwave.free(instance); } catch {}
+    }
+    throw new Error('Inizializzazione modem fixed-length fallita');
+  }
+
+  state.instances.control = control;
+  state.instances.short = short;
+  state.instances.long = long;
 }
 
 async function initAudio() {
-  if (state.context) return;
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) throw new Error('Web Audio API non supportata');
-  state.context = new AudioContextClass({sampleRate: 48000});
+
+  if (!state.context || state.context.state === 'closed') {
+    state.context = new AudioContextClass({
+      latencyHint: 'interactive'
+    });
+  }
+
   await state.context.resume();
+
+  // Su iOS si inizializza prima il modem e solo dopo si definisce la route.
+  // Evita che la creazione di un elemento audio modifichi la pipeline durante init.
+  createModemInstances();
   await configureSpeakerOutput(false);
 
-  state.instances.control = state.ggwave.init(makeParameters(CONTROL_SIZE));
-  state.instances.short = state.ggwave.init(makeParameters(SHORT_SIZE));
-  state.instances.long = state.ggwave.init(makeParameters(LONG_SIZE));
-
-  if (!state.instances.control || !state.instances.short || !state.instances.long) {
-    throw new Error('Inizializzazione modem fixed-length fallita');
-  }
+  log(
+    `AudioContext ${state.context.sampleRate} Hz · stato ${state.context.state} · ` +
+    `${isIOSLike() ? 'route diretta iOS' : 'route multimediale'}`,
+    'ok'
+  );
 }
+function startRxWatchdog() {
+  clearInterval(state.rxWatchdogTimer);
+  state.rxWatchdogTimer = setInterval(() => {
+    if (!state.running) return;
+
+    const age = Date.now() - state.rxLastCallbackAt;
+    if (!state.rxLastCallbackAt || age > 2500) {
+      setPill(els.micPill, 'RX fermo', 'bad');
+      log(`RX watchdog: nessun callback audio da ${Math.round(age / 1000)}s.`, 'err');
+
+      // Safari può sospendere il contesto anche con la pagina visibile.
+      state.context?.resume().catch(() => {});
+    } else {
+      setPill(els.micPill, 'attivo', 'on');
+    }
+  }, 1800);
+}
+
+function stopRxWatchdog() {
+  clearInterval(state.rxWatchdogTimer);
+  state.rxWatchdogTimer = null;
+}
+
 async function startNetwork() {
   if (state.running) {
     stopNetwork();
@@ -1400,32 +1483,64 @@ async function startNetwork() {
 
   try {
     await loadModem();
-    await initAudio();
-    await state.context.resume();
 
-    state.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-        channelCount: 1
-      }
-    });
+    if (
+      !state.context ||
+      state.context.state === 'closed' ||
+      !state.instances.control ||
+      !state.instances.short ||
+      !state.instances.long
+    ) {
+      await initAudio();
+    } else {
+      await state.context.resume();
+      await configureSpeakerOutput(false);
+    }
+
+    try {
+      state.stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1,
+          sampleRate: state.context.sampleRate
+        }
+      });
+    } catch (constraintError) {
+      log(`Vincoli microfono non accettati: ${constraintError.message}; uso audio standard.`);
+      state.stream = await navigator.mediaDevices.getUserMedia({audio: true});
+    }
+
+    const track = state.stream.getAudioTracks()[0];
+    const settings = track?.getSettings?.() || {};
+    log(
+      `Microfono RX: ${settings.sampleRate || '?'} Hz · ` +
+      `${settings.channelCount || 1} canale · EC ${settings.echoCancellation ?? '?'}`,
+      'ok'
+    );
 
     state.mediaSource = state.context.createMediaStreamSource(state.stream);
+    const processorSize = isIOSLike() ? 4096 : 2048;
     state.processor = state.context.createScriptProcessor
-      ? state.context.createScriptProcessor(1024, 1, 1)
-      : state.context.createJavaScriptNode(1024, 1, 1);
+      ? state.context.createScriptProcessor(processorSize, 1, 1)
+      : state.context.createJavaScriptNode(processorSize, 1, 1);
 
     state.processor.onaudioprocess = onAudio;
     state.mediaSource.connect(state.processor);
 
-    const silentGain = state.context.createGain();
-    silentGain.gain.value = 0;
-    state.processor.connect(silentGain);
-    silentGain.connect(state.context.destination);
+    // L'output del processor viene azzerato in onAudio().
+    // Collegamento diretto: Safari iOS non può eliminare il ramo come accade
+    // con un GainNode impostato esattamente a zero.
+    state.processor.connect(state.context.destination);
 
-    await configureSpeakerOutput(true);
+    state.rxCallbackCount = 0;
+    state.rxLastCallbackAt = Date.now();
+    state.rxLastLevel = 0;
+
+    if (!isIOSLike()) {
+      await configureSpeakerOutput(true);
+    }
 
     state.running = true;
     state.networkStartedAt = Date.now();
@@ -1435,6 +1550,7 @@ async function startNetwork() {
     scheduleNextDirectHeartbeat();
     state.schedulerTimer = setInterval(processQueue, 65);
     state.maintenanceTimer = setInterval(maintenance, 300);
+    startRxWatchdog();
 
     setPill(els.micPill, 'attivo', 'on');
     setPill(els.channelPill, 'attesa SYNC', 'warn');
@@ -1450,12 +1566,21 @@ async function startNetwork() {
     renderAll();
   } catch (error) {
     log(`Avvio fallito: ${error.message}`, 'err');
+
+    stopRxWatchdog();
+    if (state.stream) {
+      state.stream.getTracks().forEach(track => track.stop());
+      state.stream = null;
+    }
+    freeModemInstances();
+
     setPill(els.micPill, 'errore', 'bad');
-    alert('Non riesco ad avviare il modem. Verifica HTTPS, connessione e permesso microfono.');
+    alert('Non riesco ad avviare il modem. Premi nuovamente Avvia rete: la pipeline audio è stata ripulita.');
   }
 }
 function stopNetwork() {
   state.running = false;
+  stopRxWatchdog();
   clearInterval(state.schedulerTimer);
   clearInterval(state.maintenanceTimer);
   state.schedulerTimer = state.maintenanceTimer = null;
@@ -1469,7 +1594,7 @@ function stopNetwork() {
   if (state.stream) state.stream.getTracks().forEach(track => track.stop());
 
   state.processor = state.mediaSource = state.stream = null;
-  if (state.outputAudio) {
+  if (state.outputAudio && !isIOSLike()) {
     try { state.outputAudio.pause(); } catch {}
   }
   state.nextDirectBeaconAt = 0;
@@ -1502,10 +1627,26 @@ function onAudio(event) {
   const output = event.outputBuffer.getChannelData(0);
   output.fill(0);
 
-  // Il rumore ambientale generico non rende più il canale occupato.
-  // busyUntil viene aggiornato soltanto dopo un pacchetto AudioChat valido
-  // oppure durante una nostra trasmissione.
+  state.rxCallbackCount++;
+  state.rxLastCallbackAt = Date.now();
+
+  let sum = 0;
+  for (let index = 0; index < input.length; index++) {
+    sum += input[index] * input[index];
+  }
+  state.rxLastLevel = Math.sqrt(sum / input.length);
+
+  if (state.rxCallbackCount % 180 === 0) {
+    log(
+      `RX vivo · callback ${state.rxCallbackCount} · livello ` +
+      `${state.rxLastLevel.toFixed(4)} · ctx ${state.context.state}`
+    );
+  }
+
+  // Durante la nostra trasmissione non decodifichiamo l'eco locale,
+  // ma continuiamo a tenere viva la pipeline del microfono.
   if (state.transmitting) return;
+
   const raw = convertTypedArray(new Float32Array(input), Int8Array);
   decodeFixed('control', raw, CONTROL_SIZE);
   decodeFixed('short', raw, SHORT_SIZE);
@@ -1614,7 +1755,9 @@ function transmit(channel, payload, attempt = 1, forceRobust = false) {
         source.disconnect();
         resolve(duration);
       };
-      source.start();
+
+      // Piccolo anticipo evita avvii irregolari della sorgente su Safari iOS.
+      source.start(state.context.currentTime + 0.035);
     } catch (error) {
       reject(error);
     }
@@ -1786,6 +1929,10 @@ function nextOutgoingWaiting() {
 function maintenance() {
   const now = Date.now();
   let changed = false;
+
+  if (state.running && state.context?.state === 'suspended') {
+    state.context.resume().catch(() => {});
+  }
 
   for (const [id, device] of state.devices) {
     if (now - device.lastSeen > DEVICE_TIMEOUT) {
@@ -2420,8 +2567,12 @@ els.activateSpeakerBtn.onclick = async () => {
     return;
   }
   await state.context.resume();
-  const ok = await configureSpeakerOutput(true);
-  showToast(ok ? 'Uscita multimediale attivata' : 'Uso uscita predefinita');
+  const ok = await configureSpeakerOutput(!isIOSLike());
+  showToast(
+    isIOSLike()
+      ? 'Su iPhone è attiva l’uscita Web Audio diretta'
+      : (ok ? 'Uscita multimediale attivata' : 'Uso uscita predefinita')
+  );
 };
 els.selectOutputBtn.onclick = selectAudioOutput;
 els.volumeInput.oninput = () => {
@@ -2468,12 +2619,16 @@ persist();
 renderAll();
 restorePersistentQueue();
 setLogVisibility(localStorage.getItem('audiochat.showLog') === '1');
-if (!navigator.mediaDevices?.selectAudioOutput) {
+if (isIOSLike()) {
+  els.selectOutputBtn.style.display = 'none';
+  els.activateSpeakerBtn.textContent = 'Riattiva audio iOS';
+  updateAudioOutputStatus('Uscita Web Audio diretta (iOS)', true);
+} else if (!navigator.mediaDevices?.selectAudioOutput) {
   els.selectOutputBtn.style.display = 'none';
 }
 setPill(els.modemPill, 'da caricare', 'warn');
 els.guideOverlay.classList.add('open');
-log(`AudioChat ${VERSION} pronto · rumore generico ignorato · uscita multimediale`);
+log(`AudioChat ${VERSION} pronto · pipeline RX iOS non ottimizzabile`);
 })();
 </script>
 </body>
