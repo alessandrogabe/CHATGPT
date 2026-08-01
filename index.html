@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0b141a">
-<title>AudioChat 4.6 — coda persistente</title>
+<title>AudioChat 4.7 — diagnostica nei dettagli</title>
 <style>
 :root{
   --bg:#0b141a;--panel:#111b21;--panel2:#202c33;--panel3:#263841;
@@ -93,6 +93,20 @@ radial-gradient(circle at 30% 30%,#29404a 1px,transparent 1px);background-size:a
   .mobile-menu{display:inline-grid;place-items:center}
   .messages{padding:14px 9px}.bubble{max-width:88%}
 }
+
+.details-section{display:grid;gap:10px;padding:12px;border-radius:12px;background:var(--panel2)}
+.details-section h3{margin:0;font-size:13px}
+.details-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.details-row span{font-size:12px;color:var(--muted)}
+.details-actions{display:flex;flex-wrap:wrap;gap:8px}
+.details-actions .btn{flex:1 1 140px}
+.switch{position:relative;width:46px;height:26px;flex:0 0 auto}
+.switch input{opacity:0;width:0;height:0}
+.switch-slider{position:absolute;inset:0;border-radius:999px;background:#3a4a53;cursor:pointer;transition:.18s}
+.switch-slider::before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;background:white;transition:.18s}
+.switch input:checked + .switch-slider{background:var(--accent)}
+.switch input:checked + .switch-slider::before{transform:translateX(20px)}
+.log-panel{right:10px;left:10px;bottom:calc(78px + var(--safe-bottom));width:auto;max-width:none;max-height:min(40vh,320px)}
 </style>
 </head>
 <body>
@@ -101,7 +115,7 @@ radial-gradient(circle at 30% 30%,#29404a 1px,transparent 1px);background-size:a
     <div class="brand">
       <div class="brand-title">
         <div class="logo">AC</div>
-        <div><h1>AudioChat 4.6</h1><small>coda persistente · heartbeat adattivo</small></div>
+        <div><h1>AudioChat 4.7</h1><small>coda persistente · heartbeat adattivo</small></div>
       </div>
       <button class="icon-btn" id="closeSidebar" aria-label="Chiudi">×</button>
     </div>
@@ -184,6 +198,21 @@ radial-gradient(circle at 30% 30%,#29404a 1px,transparent 1px);background-size:a
         <label>Archivio locale</label>
         <button class="btn danger" id="clearDataBtn">Cancella messaggi e identità</button>
       </div>
+      <div class="details-section">
+        <h3>Diagnostica</h3>
+        <div class="details-row">
+          <span>Mostra pannello log</span>
+          <label class="switch">
+            <input type="checkbox" id="showLogToggle">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+        <div class="details-actions">
+          <button class="btn secondary" id="copyLogBtn">Copia log</button>
+          <button class="btn secondary" id="clearLogBtn">Svuota log</button>
+        </div>
+        <small>Il log resta nascosto durante l'uso normale.</small>
+      </div>
     </div>
     <div class="modal-actions"><button class="btn modalClose">Chiudi</button></div>
   </div>
@@ -225,14 +254,14 @@ radial-gradient(circle at 30% 30%,#29404a 1px,transparent 1px);background-size:a
 </div>
 
 <div class="log-panel" id="logPanel"></div>
-<button class="icon-btn" id="logBtn" style="position:fixed;right:12px;bottom:18px;z-index:11">LOG</button>
+
 <div class="toast" id="toast"></div>
 
 <script>
 (() => {
 'use strict';
 
-const VERSION = '4.6.0-persistent-queue';
+const VERSION = '4.7.0-diagnostics-menu';
 const BROADCAST = '0000000';
 const MAX_NODES = 5;
 
@@ -274,7 +303,9 @@ const els = {
   settingsOverlay: $('#settingsOverlay'), hierarchyOverlay: $('#hierarchyOverlay'),
   guideOverlay: $('#guideOverlay'), hierarchyList: $('#hierarchyList'),
   volumeInput: $('#volumeInput'), volumeValue: $('#volumeValue'), helloInput: $('#helloInput'),
-  clearDataBtn: $('#clearDataBtn'), logPanel: $('#logPanel'), logBtn: $('#logBtn'), toast: $('#toast')
+  clearDataBtn: $('#clearDataBtn'), logPanel: $('#logPanel'),
+  showLogToggle: $('#showLogToggle'), copyLogBtn: $('#copyLogBtn'),
+  clearLogBtn: $('#clearLogBtn'), toast: $('#toast')
 };
 
 const stored = safeJson(localStorage.getItem('audiochat4.state'), {});
@@ -569,6 +600,23 @@ function log(text, kind = '') {
   els.logPanel.prepend(row);
   while (els.logPanel.children.length > 220) els.logPanel.lastChild.remove();
 }
+function setLogVisibility(visible){
+  els.logPanel.classList.toggle('open', visible);
+  if(els.showLogToggle) els.showLogToggle.checked = visible;
+  localStorage.setItem('audiochat.showLog', visible ? '1' : '0');
+}
+async function copyLogToClipboard(){
+  const text=[...els.logPanel.children].reverse().map(row=>row.textContent).join('\n');
+  if(!text){showToast('Il log è vuoto');return}
+  try{await navigator.clipboard.writeText(text);showToast('Log copiato')}
+  catch{
+    const area=document.createElement('textarea');
+    area.value=text;area.style.position='fixed';area.style.opacity='0';
+    document.body.appendChild(area);area.select();document.execCommand('copy');area.remove();
+    showToast('Log copiato');
+  }
+}
+function clearLogPanel(){els.logPanel.innerHTML='';showToast('Log svuotato')}
 function closeOverlays() { $$('.overlay').forEach(item => item.classList.remove('open')); }
 
 function crc16Ascii(text) {
@@ -2250,7 +2298,9 @@ $$('.modalClose').forEach(button => button.onclick = closeOverlays);
 $$('.overlay').forEach(overlay => overlay.addEventListener('click', event => {
   if (event.target === overlay) closeOverlays();
 }));
-els.logBtn.onclick = () => els.logPanel.classList.toggle('open');
+els.showLogToggle.onchange = () => setLogVisibility(els.showLogToggle.checked);
+els.copyLogBtn.onclick = copyLogToClipboard;
+els.clearLogBtn.onclick = clearLogPanel;
 els.volumeInput.oninput = () => {
   state.volume = Number(els.volumeInput.value);
   els.volumeValue.textContent = state.volume;
@@ -2294,9 +2344,10 @@ window.addEventListener('beforeunload', () => {
 persist();
 renderAll();
 restorePersistentQueue();
+setLogVisibility(localStorage.getItem('audiochat.showLog') === '1');
 setPill(els.modemPill, 'da caricare', 'warn');
 els.guideOverlay.classList.add('open');
-log(`AudioChat ${VERSION} pronto · coda IndexedDB con scadenza 7 giorni`);
+log(`AudioChat ${VERSION} pronto · diagnostica nei dettagli`);
 })();
 </script>
 </body>
