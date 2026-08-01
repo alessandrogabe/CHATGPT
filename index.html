@@ -1,0 +1,2303 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b141a">
+<title>AudioChat 4.6 — coda persistente</title>
+<style>
+:root{
+  --bg:#0b141a;--panel:#111b21;--panel2:#202c33;--panel3:#263841;
+  --line:#2a3942;--text:#e9edef;--muted:#8696a0;--accent:#00a884;
+  --accent2:#53bdeb;--mine:#005c4b;--danger:#ef5350;--warn:#f3b33d;
+  --shadow:0 18px 55px rgba(0,0,0,.42);--safe-bottom:env(safe-area-inset-bottom,0px)
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{overflow:hidden}
+button,input,textarea,select{font:inherit}
+button{touch-action:manipulation}
+.app{height:100dvh;display:grid;grid-template-columns:350px minmax(0,1fr)}
+.sidebar{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;z-index:4}
+.brand{height:66px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--line)}
+.brand-title{display:flex;align-items:center;gap:10px}
+.logo{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(145deg,var(--accent),#087b69);font-weight:900;color:#052d26}
+.brand h1{font-size:18px;margin:0}.brand small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+.icon-btn{border:0;background:var(--panel2);color:var(--text);border-radius:10px;min-width:40px;height:40px;padding:0 10px;cursor:pointer}
+.identity{padding:13px 14px;border-bottom:1px solid var(--line);display:grid;gap:9px}
+.field-row{display:flex;gap:8px}
+.field{width:100%;border:1px solid transparent;border-radius:10px;background:var(--panel2);color:var(--text);padding:10px 11px;outline:none}
+.field:focus{border-color:var(--accent)}
+.field.small{max-width:105px}
+.btn{border:0;border-radius:10px;padding:10px 13px;background:var(--accent);color:#042c25;font-weight:800;cursor:pointer;white-space:nowrap}
+.btn.secondary{background:var(--panel2);color:var(--text)}
+.btn.danger{background:var(--danger);color:white}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.self-info{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.self-info code{color:#b9d8e3}
+.network-panel{padding:12px 14px;border-bottom:1px solid var(--line);display:grid;gap:9px}
+.status-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 8px;background:var(--panel2);color:var(--muted);font-size:11px;white-space:nowrap}
+.pill.on{background:#123d34;color:#75e5c9}.pill.warn{background:#493819;color:#ffd778}.pill.bad{background:#4b2020;color:#ffabab}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.main-switch{display:flex;gap:8px}
+.main-switch .btn{flex:1}
+.section-title{padding:13px 14px 7px;display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:800;color:#d5e0e5}
+.devices{overflow:auto;flex:1;padding-bottom:12px}
+.device{margin:3px 8px;padding:10px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:10px;border:1px solid transparent}
+.device:hover,.device.active{background:var(--panel2)}.device.active{border-color:#35515c}
+.avatar{width:43px;height:43px;border-radius:50%;display:grid;place-items:center;background:#355a64;font-weight:900;flex:0 0 auto;position:relative}
+.avatar .online{position:absolute;right:0;bottom:0;width:11px;height:11px;border-radius:50%;background:var(--accent);border:2px solid var(--panel)}
+.rank{position:absolute;left:-5px;top:-5px;min-width:19px;height:19px;padding:0 4px;border-radius:9px;background:#344954;color:#fff;font-size:10px;display:grid;place-items:center;border:2px solid var(--panel)}
+.rank.leader{background:var(--warn);color:#332400}
+.device-main{min-width:0;flex:1}.device-name{font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.device-meta{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+.unread{min-width:20px;height:20px;border-radius:10px;background:var(--accent);color:#052d26;font-size:11px;font-weight:900;display:grid;place-items:center;padding:0 5px}
+.empty{padding:24px 18px;color:var(--muted);text-align:center;font-size:13px;line-height:1.45}
+.chat{display:flex;flex-direction:column;min-width:0;background:
+linear-gradient(rgba(11,20,26,.94),rgba(11,20,26,.94)),
+radial-gradient(circle at 30% 30%,#29404a 1px,transparent 1px);background-size:auto,23px 23px}
+.chat-head{height:66px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 14px;gap:11px}
+.chat-head .who{min-width:0;flex:1}.chat-head .title{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-head .sub{font-size:11px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mobile-menu{display:none}
+.messages{flex:1;overflow:auto;padding:18px max(18px,5vw);display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth}
+.bubble{max-width:min(78%,700px);padding:8px 11px 6px;background:var(--panel2);border-radius:10px 10px 10px 3px;align-self:flex-start;box-shadow:0 1px 1px rgba(0,0,0,.25);overflow-wrap:anywhere}
+.bubble.mine{background:var(--mine);border-radius:10px 10px 3px 10px;align-self:flex-end}
+.bubble .meta{display:flex;justify-content:flex-end;align-items:center;gap:5px;margin-top:4px;color:#a9bdc5;font-size:10px}
+.status-icon.ok{color:#74d7ff}.status-icon.fail{color:#ff9d9d}.status-icon.pending{color:#d3c18e}
+.system{align-self:center;max-width:680px;background:#18242a;color:var(--muted);font-size:11px;padding:6px 10px;border-radius:8px;text-align:center;line-height:1.4}
+.compose{padding:10px 12px calc(10px + var(--safe-bottom));background:var(--panel);display:flex;align-items:flex-end;gap:8px;border-top:1px solid var(--line)}
+.compose textarea{flex:1;resize:none;min-height:45px;max-height:120px;border:0;border-radius:13px;background:var(--panel2);color:var(--text);padding:12px;outline:none}
+.send{width:47px;height:47px;border-radius:50%;border:0;background:var(--accent);color:#053229;font-size:19px;font-weight:900;cursor:pointer}
+.send:disabled{opacity:.4}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.68);z-index:20;display:none;align-items:center;justify-content:center;padding:16px}
+.overlay.open{display:flex}
+.modal{width:min(620px,100%);max-height:90dvh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:17px;box-shadow:var(--shadow)}
+.modal-head{padding:17px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.modal-head h2{font-size:17px;margin:0}
+.modal-body{padding:18px;display:grid;gap:16px}
+.setting{display:grid;gap:7px}.setting label{font-size:12px;color:#d6e0e4;font-weight:700}.setting small{color:var(--muted);line-height:1.4}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;padding:13px 18px;border-top:1px solid var(--line)}
+.hierarchy{display:grid;gap:6px}.hierarchy-item{display:flex;align-items:center;gap:9px;padding:9px;background:var(--panel2);border-radius:10px;font-size:12px}
+.hierarchy-item b{min-width:23px}.hierarchy-item .grow{flex:1;min-width:0}.hierarchy-item code{font-size:10px;color:var(--muted)}
+.log-panel{position:fixed;right:10px;bottom:76px;width:min(560px,calc(100vw - 20px));max-height:260px;display:none;overflow:auto;background:#061014;border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);padding:10px;z-index:12;font:11px ui-monospace,SFMono-Regular,Consolas,monospace;color:#b9d4df}
+.log-panel.open{display:block}.log-line{padding:3px 0;border-bottom:1px solid #102128}.log-err{color:#ff9a9a}.log-ok{color:#82e1c9}
+.toast{position:fixed;left:50%;bottom:85px;transform:translateX(-50%) translateY(20px);opacity:0;pointer-events:none;background:#edf6f3;color:#10241f;border-radius:10px;padding:10px 13px;box-shadow:var(--shadow);z-index:30;font-size:12px;font-weight:700;transition:.22s}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.guide{font-size:13px;line-height:1.55;color:#d3dde1}.guide h3{font-size:14px;margin:8px 0 4px}.guide ol{padding-left:20px;margin:5px 0}.guide li{margin:5px 0}.guide .note{padding:10px;border-radius:10px;background:#3d321b;color:#ffe1a1}
+@media(max-width:800px){
+  .app{grid-template-columns:1fr}
+  .sidebar{position:fixed;inset:0;width:100%;transform:translateX(-105%);transition:.22s;box-shadow:var(--shadow)}
+  .sidebar.open{transform:translateX(0)}
+  .mobile-menu{display:inline-grid;place-items:center}
+  .messages{padding:14px 9px}.bubble{max-width:88%}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-title">
+        <div class="logo">AC</div>
+        <div><h1>AudioChat 4.6</h1><small>coda persistente · heartbeat adattivo</small></div>
+      </div>
+      <button class="icon-btn" id="closeSidebar" aria-label="Chiudi">×</button>
+    </div>
+
+    <div class="identity">
+      <div class="field-row">
+        <input class="field" id="nameInput" maxlength="16" placeholder="Il tuo nome">
+        <input class="field small" id="roomInput" maxlength="12" placeholder="Canale">
+        <button class="btn" id="saveIdentity">Salva</button>
+      </div>
+      <div class="self-info">
+        <span>ID <code id="selfId"></code></span>
+        <span id="selfRank">gerarchia —</span>
+      </div>
+    </div>
+
+    <div class="network-panel">
+      <div class="status-row"><span>Modem</span><span class="pill warn" id="modemPill"><span class="dot"></span>da caricare</span></div>
+      <div class="status-row"><span>Microfono</span><span class="pill" id="micPill"><span class="dot"></span>spento</span></div>
+      <div class="status-row"><span>Canale acustico</span><span class="pill" id="channelPill"><span class="dot"></span>inattivo</span></div>
+      <div class="main-switch">
+        <button class="btn" id="startBtn">Avvia rete</button>
+        <button class="btn secondary" id="announceBtn" disabled>Presentati</button>
+      </div>
+    </div>
+
+    <div class="section-title">
+      <span>Conversazioni</span>
+      <span class="pill" id="deviceCount">0 vicini</span>
+    </div>
+    <div class="devices" id="devices"></div>
+  </aside>
+
+  <main class="chat">
+    <div class="chat-head">
+      <button class="icon-btn mobile-menu" id="openSidebar">☰</button>
+      <div class="avatar" id="chatAvatar">∞</div>
+      <div class="who">
+        <div class="title" id="chatTitle">Tutti i dispositivi</div>
+        <div class="sub" id="chatSub">broadcast fixed-length · nessuna conferma di consegna</div>
+      </div>
+      <button class="icon-btn" id="hierarchyBtn" title="Gerarchia">♛</button>
+      <button class="icon-btn" id="settingsBtn" title="Impostazioni">⚙</button>
+      <button class="icon-btn" id="guideBtn" title="Guida">?</button>
+    </div>
+
+    <div class="messages" id="messages"></div>
+
+    <div class="compose">
+      <textarea id="messageInput" maxlength="900" rows="1" placeholder="Scrivi un messaggio"></textarea>
+      <button class="send" id="sendBtn" aria-label="Invia" disabled>➤</button>
+    </div>
+  </main>
+</div>
+
+<div class="overlay" id="settingsOverlay">
+  <div class="modal">
+    <div class="modal-head"><h2>Impostazioni modem</h2><button class="icon-btn modalClose">×</button></div>
+    <div class="modal-body">
+      <div class="setting">
+        <label for="volumeInput">Volume di trasmissione: <span id="volumeValue">10</span></label>
+        <input id="volumeInput" type="range" min="3" max="20" value="10">
+        <small>Il valore controlla l’ampiezza generata da ggwave. Regola anche il volume fisico dell’iPhone.</small>
+      </div>
+      <div class="setting">
+        <label for="helloInput">Intervallo di presenza</label>
+        <select class="field" id="helloInput">
+          <option value="15000">15 secondi</option>
+          <option value="24000" selected>24 secondi</option>
+          <option value="36000">36 secondi</option>
+        </select>
+        <small>Con due telefoni viene usato un collegamento diretto. Da tre a cinque telefoni vengono eletti due coordinatori.</small>
+      </div>
+      <div class="setting">
+        <label>Profilo velocità</label>
+        <div class="pill on">diretta 1–2 telefoni · mesh 3–5</div>
+        <small>Con uno o due telefoni non servono JOIN o GRANT: identità, messaggio e ACK sono diretti. Da tre telefoni si attiva la mesh coordinata.</small>
+      </div>
+      <div class="setting">
+        <label>Archivio locale</label>
+        <button class="btn danger" id="clearDataBtn">Cancella messaggi e identità</button>
+      </div>
+    </div>
+    <div class="modal-actions"><button class="btn modalClose">Chiudi</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="hierarchyOverlay">
+  <div class="modal">
+    <div class="modal-head"><h2>Gerarchia della rete</h2><button class="icon-btn modalClose">×</button></div>
+    <div class="modal-body">
+      <div class="guide">
+        Con uno o due telefoni la chat funziona direttamente, senza coordinamento. Con 3–5 telefoni i due ID più bassi alternano SYNC e conferma.
+      </div>
+      <div class="hierarchy" id="hierarchyList"></div>
+    </div>
+    <div class="modal-actions"><button class="btn modalClose">Chiudi</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="guideOverlay">
+  <div class="modal">
+    <div class="modal-head"><h2>Prova rapida su due iPhone</h2><button class="icon-btn modalClose">×</button></div>
+    <div class="modal-body guide">
+      <ol>
+        <li>Apri la stessa pagina HTTPS su entrambi gli iPhone in Safari.</li>
+        <li>Scegli nomi diversi e lo stesso canale, poi premi <b>Salva</b>.</li>
+        <li>Premi <b>Avvia rete</b> su entrambi e consenti il microfono.</li>
+        <li>Alza il volume multimediale e tieni i telefoni a 30–100 cm.</li>
+        <li>Con due telefoni attendi che il nome dell’altro compaia: la chat viene aperta automaticamente. Se non accade, premi Presentati su entrambi.</li>
+        <li>Con due telefoni scrivi subito nel campo in basso e premi ➤. Da tre telefoni la richiesta di trasmissione viene coordinata automaticamente.</li>
+      </ol>
+      <div class="note">Safari sospende microfono e JavaScript quando la pagina resta in background o lo schermo si spegne. Durante la prova lascia AudioChat visibile.</div>
+      <h3>Gerarchia</h3>
+      <div>Il dispositivo rilevato viene selezionato automaticamente. Il tasto Presentati invia tre annunci robusti; da tre dispositivi in poi resta attivo il coordinamento distribuito.</div>
+      <h3>Limite reale</h3>
+      <div>È una rete acustica per testo breve. Non può raggiungere la velocità di Wi‑Fi o Bluetooth: ggwave privilegia robustezza e correzione degli errori.</div>
+    </div>
+    <div class="modal-actions"><button class="btn modalClose">Chiudi</button></div>
+  </div>
+</div>
+
+<div class="log-panel" id="logPanel"></div>
+<button class="icon-btn" id="logBtn" style="position:fixed;right:12px;bottom:18px;z-index:11">LOG</button>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+'use strict';
+
+const VERSION = '4.6.0-persistent-queue';
+const BROADCAST = '0000000';
+const MAX_NODES = 5;
+
+const CONTROL_SIZE = 32;
+const SHORT_SIZE = 64;
+const LONG_SIZE = 96;
+const SHORT_UTF8_BYTES = 24;
+const LONG_UTF8_BYTES = 48;
+
+const FRAME_MS = 15000;
+const CONTROL_SLOT_MS = 1450;
+const TAKEOVER_GRACE_MS = 2600;
+const DEVICE_TIMEOUT = 105000;
+const ACK_TIMEOUT = 4300;
+const MAX_ATTEMPTS = 3;
+const QUEUE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const QUEUE_DB_NAME = 'AudioChatPersistentQueue';
+const QUEUE_DB_VERSION = 1;
+const QUEUE_STORE = 'outgoing';
+const PAD = '~';
+
+const CDN_URLS = [
+  'https://cdn.jsdelivr.net/npm/ggwave@0.4.0/ggwave.js',
+  'https://unpkg.com/ggwave@0.4.0/ggwave.js'
+];
+
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+
+const els = {
+  sidebar: $('#sidebar'), openSidebar: $('#openSidebar'), closeSidebar: $('#closeSidebar'),
+  nameInput: $('#nameInput'), roomInput: $('#roomInput'), saveIdentity: $('#saveIdentity'),
+  selfId: $('#selfId'), selfRank: $('#selfRank'), modemPill: $('#modemPill'),
+  micPill: $('#micPill'), channelPill: $('#channelPill'), startBtn: $('#startBtn'),
+  announceBtn: $('#announceBtn'), deviceCount: $('#deviceCount'), devices: $('#devices'),
+  chatAvatar: $('#chatAvatar'), chatTitle: $('#chatTitle'), chatSub: $('#chatSub'),
+  messages: $('#messages'), messageInput: $('#messageInput'), sendBtn: $('#sendBtn'),
+  settingsBtn: $('#settingsBtn'), hierarchyBtn: $('#hierarchyBtn'), guideBtn: $('#guideBtn'),
+  settingsOverlay: $('#settingsOverlay'), hierarchyOverlay: $('#hierarchyOverlay'),
+  guideOverlay: $('#guideOverlay'), hierarchyList: $('#hierarchyList'),
+  volumeInput: $('#volumeInput'), volumeValue: $('#volumeValue'), helloInput: $('#helloInput'),
+  clearDataBtn: $('#clearDataBtn'), logPanel: $('#logPanel'), logBtn: $('#logBtn'), toast: $('#toast')
+};
+
+const stored = safeJson(localStorage.getItem('audiochat4.state'), {});
+const legacy = safeJson(localStorage.getItem('audiochat3.state'), {});
+
+const state = {
+  id: normalizeId(stored.id || legacy.id || randomId(7)),
+  name: stored.name || legacy.name || '',
+  room: stored.room || legacy.room || 'LOCALE',
+  selected: normalizePeer(stored.selected || BROADCAST),
+  volume: Number(stored.volume || legacy.volume || 10),
+  helloEvery: 30000,
+  histories: stored.histories || {},
+  unread: stored.unread || {},
+
+  devices: new Map(),
+  assemblies: new Map(),
+  seenMessages: new Set(),
+  txQueue: [],
+  awaitingAck: new Map(),
+  outgoing: new Map(),
+  pendingRequests: new Map(),
+
+  ggwave: null,
+  instances: {control: null, short: null, long: null},
+  context: null,
+  stream: null,
+  mediaSource: null,
+  processor: null,
+
+  running: false,
+  transmitting: false,
+  schedulerTimer: null,
+  maintenanceTimer: null,
+  frameTimers: new Set(),
+  busyUntil: 0,
+  leaseUntil: 0,
+  activeLease: null,
+
+  joined: false,
+  networkStartedAt: 0,
+  epoch: 0,
+  cycle: -1,
+  frameAnchor: 0,
+  lastSyncAt: 0,
+  nextFrameAt: 0,
+  syncQueuedFor: '',
+  currentSyncSender: '',
+  currentRosterHash: '',
+  lastConfirmAt: 0,
+  coordinatorAgreement: 'isolato',
+  lastJoinAt: 0,
+  lastIdentityTxAt: 0,
+  nextDirectBeaconAt: 0,
+  heartbeatSequence: 0,
+  heartbeatBackoff: 0,
+  lastHeartbeatTxAt: 0,
+  queueDb: null,
+  queueRestored: false,
+  wakeLock: null
+};
+
+els.nameInput.value = state.name;
+els.roomInput.value = state.room;
+els.volumeInput.value = state.volume;
+els.volumeValue.textContent = state.volume;
+els.helloInput.value = '24000';
+els.helloInput.disabled = true;
+els.selfId.textContent = state.id;
+
+function safeJson(value, fallback) {
+  try { return value ? JSON.parse(value) : fallback; } catch { return fallback; }
+}
+function normalizeId(value) {
+  const clean = String(value || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  return (clean + randomId(7)).slice(0, 7);
+}
+function normalizePeer(value) {
+  if (value === '00000000' || value === BROADCAST) return BROADCAST;
+  return normalizeId(value);
+}
+function randomId(length) {
+  const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  return [...bytes].map(byte => alphabet[byte % alphabet.length]).join('');
+}
+function tokenId() { return randomId(5); }
+function initials(name) { return (name || '?').trim().slice(0, 2).toUpperCase(); }
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]
+  ));
+}
+function nowTime(timestamp = Date.now()) {
+  return new Date(timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+function randomBetween(min, max) { return min + Math.random() * (max - min); }
+
+function stableIdFraction(id = state.id) {
+  let hash = 2166136261;
+  for (const char of String(id)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967295;
+}
+
+function cryptoFraction() {
+  return crypto.getRandomValues(new Uint32Array(1))[0] / 4294967295;
+}
+
+function nextAdaptiveHeartbeatDelay() {
+  const stablePhase = stableIdFraction();
+  const randomPhase = cryptoFraction();
+  const sequencePhase = ((state.heartbeatSequence * 0.61803398875) % 1);
+  const minimum = 6500;
+  const variable = 9000 * (
+    0.20 * stablePhase +
+    0.55 * randomPhase +
+    0.25 * sequencePhase
+  );
+  const backoff = Math.min(12000, state.heartbeatBackoff);
+  state.heartbeatSequence++;
+  return Math.round(minimum + variable + backoff);
+}
+
+function scheduleNextDirectHeartbeat(fromNow = Date.now()) {
+  state.nextDirectBeaconAt = fromNow + nextAdaptiveHeartbeatDelay();
+}
+
+function toB36(number, width = 1) {
+  return Math.max(0, number).toString(36).toUpperCase().padStart(width, '0').slice(-width);
+}
+function fromB36(value) {
+  const parsed = parseInt(value, 36);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+function roomCode() {
+  const normalized = (state.room || 'LOCALE').trim().toUpperCase();
+  let hash = 0x811c9dc5;
+  for (const char of normalized) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36).toUpperCase().padStart(2, '0').slice(-2);
+}
+function packetPrefix(type) { return `A4${type}${roomCode()}${state.id}`; }
+function directMode() { return onlineNodes().length <= 2; }
+function asciiName(value) {
+  return String(value || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^0-9A-Za-z _.-]/g, '')
+    .trim().slice(0, 15) || state.id;
+}
+function persist() {
+  localStorage.setItem('audiochat4.state', JSON.stringify({
+    id: state.id, name: state.name, room: state.room, selected: state.selected,
+    volume: state.volume, histories: state.histories, unread: state.unread
+  }));
+}
+
+function openQueueDb() {
+  if (state.queueDb) return Promise.resolve(state.queueDb);
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      reject(new Error('IndexedDB non disponibile'));
+      return;
+    }
+
+    const request = indexedDB.open(QUEUE_DB_NAME, QUEUE_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(QUEUE_STORE)) {
+        const store = db.createObjectStore(QUEUE_STORE, {keyPath: 'token'});
+        store.createIndex('senderRoom', ['senderId', 'room'], {unique: false});
+        store.createIndex('createdAt', 'createdAt', {unique: false});
+      }
+    };
+    request.onsuccess = () => {
+      state.queueDb = request.result;
+      state.queueDb.onversionchange = () => state.queueDb?.close();
+      resolve(state.queueDb);
+    };
+    request.onerror = () => reject(request.error || new Error('Errore apertura IndexedDB'));
+  });
+}
+
+async function queueDbPut(outgoing) {
+  try {
+    const db = await openQueueDb();
+    const record = {
+      ...outgoing,
+      senderId: state.id,
+      room: state.room,
+      updatedAt: Date.now()
+    };
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(QUEUE_STORE, 'readwrite');
+      tx.objectStore(QUEUE_STORE).put(record);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } catch (error) {
+    log(`Coda persistente: ${error.message}`, 'err');
+  }
+}
+
+async function queueDbDelete(token) {
+  try {
+    const db = await openQueueDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(QUEUE_STORE, 'readwrite');
+      tx.objectStore(QUEUE_STORE).delete(token);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } catch (error) {
+    log(`Eliminazione coda: ${error.message}`, 'err');
+  }
+}
+
+async function queueDbGetAll() {
+  const db = await openQueueDb();
+  return await new Promise((resolve, reject) => {
+    const tx = db.transaction(QUEUE_STORE, 'readonly');
+    const request = tx.objectStore(QUEUE_STORE).getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function restorePersistentQueue() {
+  if (state.queueRestored) return;
+  state.queueRestored = true;
+
+  try {
+    const records = await queueDbGetAll();
+    const now = Date.now();
+    let restored = 0;
+
+    for (const record of records) {
+      const expired = now - Number(record.createdAt || 0) > QUEUE_RETENTION_MS;
+      const belongsHere = record.senderId === state.id && record.room === state.room;
+
+      if (expired) {
+        await queueDbDelete(record.token);
+        continue;
+      }
+      if (!belongsHere || record.status === 'delivered') continue;
+
+      record.status = 'waiting_offline';
+      record.requestCycle = -1;
+      record.parts = Array.isArray(record.parts) ? record.parts : buildMessageParts(record.text || '');
+      record.acked = Array.isArray(record.acked) ? record.acked : [];
+      state.outgoing.set(record.token, record);
+
+      const message = findMessage(record.token);
+      if (message && message.status !== 'delivered') {
+        message.status = 'waiting_offline';
+        message.acked = Array.isArray(record.acked) ? [...record.acked] : [];
+      }
+      restored++;
+    }
+
+    if (restored) {
+      persist();
+      renderConversation();
+      log(`${restored} messagg${restored === 1 ? 'io ripristinato' : 'i ripristinati'} dalla coda persistente.`, 'ok');
+    }
+  } catch (error) {
+    state.queueRestored = false;
+    log(`Ripristino coda: ${error.message}`, 'err');
+  }
+}
+
+function setPill(element, text, mode = '') {
+  element.className = 'pill' + (mode ? ' ' + mode : '');
+  element.innerHTML = `<span class="dot"></span>${escapeHtml(text)}`;
+}
+function showToast(text) {
+  els.toast.textContent = text;
+  els.toast.classList.add('show');
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => els.toast.classList.remove('show'), 2200);
+}
+function log(text, kind = '') {
+  const row = document.createElement('div');
+  row.className = 'log-line ' + (kind === 'err' ? 'log-err' : kind === 'ok' ? 'log-ok' : '');
+  row.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+  els.logPanel.prepend(row);
+  while (els.logPanel.children.length > 220) els.logPanel.lastChild.remove();
+}
+function closeOverlays() { $$('.overlay').forEach(item => item.classList.remove('open')); }
+
+function crc16Ascii(text) {
+  let crc = 0xFFFF;
+  for (let position = 0; position < text.length; position++) {
+    crc ^= (text.charCodeAt(position) & 0xFF) << 8;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc & 0x8000)
+        ? ((crc << 1) ^ 0x1021) & 0xFFFF
+        : (crc << 1) & 0xFFFF;
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+function finishPacket(content, size) {
+  if (content.length > size - 4) {
+    throw new Error(`Pacchetto ${content.length} > ${size - 4}`);
+  }
+  const body = content.padEnd(size - 4, PAD);
+  return body + crc16Ascii(body);
+}
+function validatePacket(packet, size) {
+  if (typeof packet !== 'string' || packet.length !== size) return false;
+  const body = packet.slice(0, -4);
+  return crc16Ascii(body) === packet.slice(-4);
+}
+function bytesToBase64Url(bytes) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function base64UrlToBytes(text) {
+  const normalized = text.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+  const binary = atob(padded);
+  return Uint8Array.from(binary, char => char.charCodeAt(0));
+}
+function textToB64(text) { return bytesToBase64Url(new TextEncoder().encode(text)); }
+function b64ToText(text) { return new TextDecoder().decode(base64UrlToBytes(text)); }
+function splitUtf8(text, maxBytes) {
+  const result = [];
+  let current = '';
+  let bytes = 0;
+  for (const char of text) {
+    const length = new TextEncoder().encode(char).length;
+    if (current && bytes + length > maxBytes) {
+      result.push(current);
+      current = char;
+      bytes = length;
+    } else {
+      current += char;
+      bytes += length;
+    }
+  }
+  if (current) result.push(current);
+  return result;
+}
+function rosterHash(ids = rosterIds()) {
+  let hash = 2166136261;
+  for (const char of ids.join('')) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36).toUpperCase().padStart(4, '0').slice(-4);
+}
+
+function onlineNodes() {
+  const now = Date.now();
+  const nodes = [{id: state.id, name: state.name || 'Questo dispositivo', self: true, lastSeen: now}];
+  for (const device of state.devices.values()) {
+    if (now - device.lastSeen < DEVICE_TIMEOUT) nodes.push({...device, self: false});
+  }
+  return [...new Map(nodes.map(node => [node.id, node])).values()]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .slice(0, MAX_NODES);
+}
+function rosterIds() { return onlineNodes().map(node => node.id); }
+function coordinatorCount() {
+  const count = onlineNodes().length;
+  return count >= 3 ? 2 : 1;
+}
+function coordinators() { return onlineNodes().slice(0, coordinatorCount()); }
+function members() {
+  const coordinatorIds = new Set(coordinators().map(node => node.id));
+  return onlineNodes().filter(node => !coordinatorIds.has(node.id));
+}
+function coordinatorIndex(id = state.id) {
+  return coordinators().findIndex(node => node.id === id);
+}
+function activeCoordinator(cycle = state.cycle) {
+  const list = coordinators();
+  if (!list.length) return null;
+  return list[Math.max(0, cycle) % list.length];
+}
+function backupCoordinator(cycle = state.cycle) {
+  const list = coordinators();
+  if (list.length < 2) return list[0] || null;
+  return list[(Math.max(0, cycle) + 1) % list.length];
+}
+function myRank() { return onlineNodes().findIndex(node => node.id === state.id) + 1; }
+function isCoordinator(id = state.id) { return coordinatorIndex(id) >= 0; }
+function touchDevice(id, name = null) {
+  if (id === state.id) return false;
+  const existing = state.devices.get(id);
+  const firstSeen = !existing;
+  state.devices.set(id, {
+    id,
+    name: name || existing?.name || id,
+    lastSeen: Date.now()
+  });
+
+  if (firstSeen && state.selected === BROADCAST) {
+    state.selected = id;
+    state.unread[id] = 0;
+    persist();
+    showToast(`Rilevato ${name || id}: chat aperta`);
+  }
+
+  // Ogni pacchetto valido del contatto prova a sbloccare la sua coda.
+  setTimeout(() => resumePendingForPeer(id), 450 + Math.random() * 700);
+  return firstSeen;
+}
+function termIsNewer(epoch, cycle, sender) {
+  if (epoch !== state.epoch) return epoch > state.epoch;
+  if (cycle !== state.cycle) return cycle > state.cycle;
+  if (!state.currentSyncSender) return true;
+  return sender.localeCompare(state.currentSyncSender) < 0;
+}
+
+function renderAll() {
+  renderIdentity();
+  renderDevices();
+  renderConversation();
+  renderHierarchy();
+}
+function renderIdentity() {
+  els.selfId.textContent = state.id;
+  const rank = myRank();
+  const coordIndex = coordinatorIndex();
+  let role = directMode() ? 'modalità diretta' : `grado #${rank}`;
+  if (!directMode() && coordIndex === 0) role += ' · coordinatore A';
+  if (!directMode() && coordIndex === 1) role += ' · coordinatore B';
+  if (!directMode() && state.currentSyncSender === state.id) role += ' · attivo';
+  els.selfRank.textContent = role;
+
+  if (state.running) {
+    const now = Date.now();
+    const status = state.transmitting ? 'trasmissione'
+      : now < state.leaseUntil ? 'lease messaggio'
+      : now < state.busyUntil ? 'occupato'
+      : 'libero';
+    setPill(els.channelPill, status, status === 'libero' ? 'on' : 'warn');
+  }
+}
+function unreadBadge(id) {
+  const unread = Number(state.unread[id] || 0);
+  return unread ? `<span class="unread">${unread > 99 ? '99+' : unread}</span>` : '';
+}
+function renderDevices() {
+  els.devices.innerHTML = '';
+
+  const broadcast = document.createElement('div');
+  broadcast.className = 'device' + (state.selected === BROADCAST ? ' active' : '');
+  broadcast.innerHTML =
+    `<div class="avatar">∞<span class="rank leader">ALL</span></div>` +
+    `<div class="device-main"><div class="device-name">Tutti i dispositivi</div>` +
+    `<div class="device-meta">broadcast con lease coordinata</div></div>${unreadBadge(BROADCAST)}`;
+  broadcast.onclick = () => selectPeer(BROADCAST);
+  els.devices.appendChild(broadcast);
+
+  const nodes = onlineNodes().filter(node => !node.self);
+  const coordinatorIds = new Set(coordinators().map(node => node.id));
+  els.deviceCount.textContent = `${nodes.length} vicin${nodes.length === 1 ? 'o' : 'i'}`;
+
+  for (const node of nodes) {
+    const rank = onlineNodes().findIndex(item => item.id === node.id) + 1;
+    const coordPosition = coordinators().findIndex(item => item.id === node.id);
+    const role = coordPosition === 0 ? 'coordinatore A'
+      : coordPosition === 1 ? 'coordinatore B'
+      : `membro · slot #${members().findIndex(item => item.id === node.id) + 1}`;
+
+    const row = document.createElement('div');
+    row.className = 'device' + (state.selected === node.id ? ' active' : '');
+    row.innerHTML =
+      `<div class="avatar">${escapeHtml(initials(node.name))}` +
+      `<span class="rank ${coordinatorIds.has(node.id) ? 'leader' : ''}">${coordinatorIds.has(node.id) ? '♛' : rank}</span>` +
+      `<span class="online"></span></div>` +
+      `<div class="device-main"><div class="device-name">${escapeHtml(node.name || node.id)}</div>` +
+      `<div class="device-meta">${role} · ${node.id} · ${Math.max(0, Math.round((Date.now() - node.lastSeen) / 1000))}s</div></div>` +
+      unreadBadge(node.id);
+    row.onclick = () => selectPeer(node.id);
+    els.devices.appendChild(row);
+  }
+
+  if (!nodes.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.innerHTML = 'Nessun dispositivo vicino.<br>Con 3–5 telefoni verranno eletti automaticamente due coordinatori.';
+    els.devices.appendChild(empty);
+  }
+}
+function selectPeer(id) {
+  state.selected = id;
+  state.unread[id] = 0;
+  persist();
+  renderDevices();
+  renderConversation();
+  if (innerWidth <= 800) els.sidebar.classList.remove('open');
+}
+function peerInfo(id) {
+  if (id === BROADCAST) return {id, name: 'Tutti i dispositivi', broadcast: true};
+  return state.devices.get(id) || {id, name: id, broadcast: false};
+}
+function history(id) { return state.histories[id] || (state.histories[id] = []); }
+function trimHistory(id) { state.histories[id] = history(id).slice(-250); }
+function renderConversation() {
+  const peer = peerInfo(state.selected);
+  els.chatAvatar.textContent = peer.broadcast ? '∞' : initials(peer.name);
+  els.chatTitle.textContent = peer.name;
+  els.chatSub.textContent = peer.broadcast
+    ? (directMode()
+        ? 'broadcast diretto · scrivi e premi ➤'
+        : 'broadcast · concessione condivisa dai coordinatori')
+    : (directMode()
+        ? `ID ${peer.id} · collegamento diretto + ACK`
+        : `ID ${peer.id} · lease coordinata + ACK`);
+
+  els.messages.innerHTML = '';
+  const items = history(state.selected);
+  if (!items.length) {
+    els.messages.innerHTML = `<div class="system">${
+      peer.broadcast
+        ? (directMode()
+            ? 'Con due telefoni puoi inviare subito. Per un messaggio privato seleziona il contatto.'
+            : 'Il broadcast parte dopo una concessione del coordinatore attivo.')
+        : (directMode()
+            ? 'Scrivi il messaggio nel campo in basso e premi ➤.'
+            : 'Nessun messaggio in questa conversazione.')
+    }</div>`;
+  } else {
+    for (const message of items) {
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble' + (message.direction === 'out' ? ' mine' : '');
+      const sender = peer.broadcast && message.direction === 'in'
+        ? `<b>${escapeHtml(message.fromName || message.from)}</b><br>` : '';
+      bubble.innerHTML =
+        `<div>${sender}${escapeHtml(message.text).replace(/\n/g, '<br>')}</div>` +
+        `<div class="meta">${nowTime(message.ts)} ${message.direction === 'out' ? statusIcon(message.status) : ''}</div>`;
+      els.messages.appendChild(bubble);
+    }
+  }
+  els.messages.scrollTop = els.messages.scrollHeight;
+  els.sendBtn.disabled = !state.running || !state.name;
+}
+function statusIcon(status) {
+  if (status === 'delivered') return '<span class="status-icon ok">✓✓</span>';
+  if (status === 'waiting_offline') return '<span class="status-icon pending" title="In attesa del destinatario">🕓</span>';
+  if (status === 'failed') return '<span class="status-icon fail">!</span>';
+  if (status === 'granted' || status === 'transmitting') return '<span class="status-icon pending">◌</span>';
+  return '<span class="status-icon pending">✓</span>';
+}
+function renderHierarchy() {
+  els.hierarchyList.innerHTML = '';
+  const coordinatorIds = new Set(coordinators().map(node => node.id));
+  onlineNodes().forEach((node, index) => {
+    const coordPosition = coordinators().findIndex(item => item.id === node.id);
+    const label = coordPosition === 0 ? 'A'
+      : coordPosition === 1 ? 'B'
+      : `slot ${members().findIndex(item => item.id === node.id) + 1}`;
+    const row = document.createElement('div');
+    row.className = 'hierarchy-item';
+    row.innerHTML =
+      `<b>${coordinatorIds.has(node.id) ? '♛' : '#' + (index + 1)}</b>` +
+      `<div class="grow">${escapeHtml(node.name || node.id)} · ${label}` +
+      `${node.self ? ' <span class="pill on">questo iPhone</span>' : ''}</div>` +
+      `<code>${node.id}</code>`;
+    els.hierarchyList.appendChild(row);
+  });
+
+  const agreement = document.createElement('div');
+  agreement.className = 'hierarchy-item';
+  agreement.innerHTML =
+    `<b>↔</b><div class="grow">Stato coordinamento</div><code>${escapeHtml(state.coordinatorAgreement)}</code>`;
+  els.hierarchyList.appendChild(agreement);
+}
+
+function packControl(type, data = {}) {
+  let variable = '';
+  if (type === 'C') {
+    variable =
+      toB36(data.epoch, 2) +
+      toB36(data.cycle, 2) +
+      toB36(data.count, 1) +
+      String(data.hash || '0000').slice(0, 4) +
+      toB36(data.coordinatorCount, 1) +
+      '01';
+  } else if (type === 'V') {
+    variable =
+      String(data.leader || BROADCAST).slice(0, 7) +
+      toB36(data.epoch, 2) +
+      toB36(data.cycle, 2) +
+      String(data.hash || '0000').slice(0, 4) +
+      String(data.status || 'O').slice(0, 1);
+  } else if (type === 'P') {
+    variable =
+      toB36(data.epoch, 2) +
+      toB36(data.cycle, 2) +
+      toB36(data.rank, 1) +
+      String(data.hash || '0000').slice(0, 4);
+  } else if (type === 'H') {
+    const name = asciiName(data.name || state.name);
+    variable = toB36(name.length, 1) + name;
+  } else if (type === 'J') {
+    variable = String(data.nonce || randomId(3)).slice(0, 3) + String(data.nameHash || '0000').slice(0, 4);
+  } else if (type === 'Y') {
+    variable =
+      String(data.target || BROADCAST).slice(0, 7) +
+      toB36(data.epoch, 2) +
+      toB36(data.rank, 1);
+  } else if (type === 'R') {
+    variable = String(data.target || BROADCAST).slice(0, 7);
+  } else if (type === 'Q') {
+    variable =
+      String(data.coordinator || BROADCAST).slice(0, 7) +
+      String(data.token || '00000').slice(0, 5) +
+      toB36(data.parts || 1, 1) +
+      String(data.profile || 'L').slice(0, 1);
+  } else if (type === 'G') {
+    variable =
+      String(data.target || BROADCAST).slice(0, 7) +
+      String(data.token || '00000').slice(0, 5) +
+      toB36(data.leaseSeconds || 8, 1) +
+      toB36(data.cycle || 0, 2);
+  } else if (type === 'A') {
+    variable =
+      String(data.target || BROADCAST).slice(0, 7) +
+      String(data.token || '00000').slice(0, 5) +
+      toB36(data.part || 0, 1);
+  } else {
+    throw new Error(`Controllo non supportato: ${type}`);
+  }
+  return finishPacket(packetPrefix(type) + variable, CONTROL_SIZE);
+}
+function unpackControl(packet) {
+  if (!validatePacket(packet, CONTROL_SIZE)) return null;
+  if (packet.slice(0, 2) !== 'A4') return null;
+  const type = packet[2];
+  const room = packet.slice(3, 5);
+  const sender = packet.slice(5, 12);
+  if (room !== roomCode() || sender === state.id) return null;
+  return {type, sender, body: packet.slice(12, -4).replace(/~+$/g, '')};
+}
+function packIdentity(target = BROADCAST) {
+  const safeName = splitUtf8((state.name || state.id).slice(0, 20), 24)[0] || state.id;
+  const encoded = textToB64(safeName);
+  const content =
+    packetPrefix('I') +
+    String(target).slice(0, 7) +
+    toB36(encoded.length, 2) +
+    encoded;
+  return finishPacket(content, SHORT_SIZE);
+}
+function packRoster() {
+  const ids = rosterIds().slice(0, MAX_NODES);
+  const content =
+    packetPrefix('L') +
+    toB36(state.epoch, 2) +
+    toB36(Math.max(0, state.cycle), 2) +
+    toB36(ids.length, 1) +
+    ids.join('');
+  return finishPacket(content, SHORT_SIZE);
+}
+function unpackShortControl(packet) {
+  if (!validatePacket(packet, SHORT_SIZE)) return null;
+  if (packet.slice(0, 2) !== 'A4') return null;
+  const type = packet[2];
+  if (type !== 'I' && type !== 'L') return null;
+  const room = packet.slice(3, 5);
+  const sender = packet.slice(5, 12);
+  if (room !== roomCode() || sender === state.id) return null;
+  return {type, sender, body: packet.slice(12, -4).replace(/~+$/g, '')};
+}
+function packData(type, target, token, part, total, text, size) {
+  const encoded = textToB64(text);
+  const capacity = size === SHORT_SIZE ? 32 : 64;
+  if (encoded.length > capacity) throw new Error(`Payload ${encoded.length} > ${capacity}`);
+  const content =
+    packetPrefix(type) +
+    String(target).slice(0, 7) +
+    String(token).slice(0, 5) +
+    toB36(part, 1) +
+    toB36(total, 1) +
+    toB36(encoded.length, 2) +
+    encoded;
+  return finishPacket(content, size);
+}
+function unpackData(packet, size) {
+  if (!validatePacket(packet, size)) return null;
+  if (packet.slice(0, 2) !== 'A4') return null;
+  const type = packet[2];
+  if (type !== 'S' && type !== 'M') return null;
+  const room = packet.slice(3, 5);
+  const sender = packet.slice(5, 12);
+  if (room !== roomCode() || sender === state.id) return null;
+  const target = packet.slice(12, 19);
+  const token = packet.slice(19, 24);
+  const part = fromB36(packet[24]);
+  const total = fromB36(packet[25]);
+  const length = fromB36(packet.slice(26, 28));
+  const payload = packet.slice(28, 28 + length);
+  try {
+    return {type, sender, target, token, part, total, text: b64ToText(payload)};
+  } catch {
+    return null;
+  }
+}
+
+function queuePacket(item) {
+  item.qid ||= randomId(6);
+  item.dueAt ||= Date.now();
+  item.priority ??= 5;
+  item.attempts ||= 0;
+  state.txQueue.push(item);
+  state.txQueue.sort((a, b) => a.priority - b.priority || a.dueAt - b.dueAt);
+}
+function clearFrameTimers() {
+  for (const timer of state.frameTimers) clearTimeout(timer);
+  state.frameTimers.clear();
+}
+function frameTimeout(callback, delay) {
+  const timer = setTimeout(() => {
+    state.frameTimers.delete(timer);
+    callback();
+  }, Math.max(0, delay));
+  state.frameTimers.add(timer);
+}
+function queueSync(epoch, cycle, takeover = false) {
+  const key = `${epoch}:${cycle}`;
+  if (state.syncQueuedFor === key) return;
+  state.syncQueuedFor = key;
+  queuePacket({
+    kind: takeover ? 'SYNC takeover' : 'SYNC',
+    channel: 'control',
+    payload: packControl('C', {
+      epoch, cycle, count: rosterIds().length,
+      hash: rosterHash(), coordinatorCount: coordinatorCount()
+    }),
+    priority: 0,
+    dueAt: Date.now() + randomBetween(40, 120),
+    afterTx: () => acceptSync({
+      sender: state.id, epoch, cycle, count: rosterIds().length,
+      hash: rosterHash(), coordinatorCount: coordinatorCount()
+    }, true)
+  });
+}
+function queueVote(sync, status) {
+  queuePacket({
+    kind: 'conferma coordinatore',
+    channel: 'control',
+    payload: packControl('V', {
+      leader: sync.sender, epoch: sync.epoch, cycle: sync.cycle,
+      hash: rosterHash(), status
+    }),
+    priority: 0,
+    dueAt: Date.now() + randomBetween(80, 180)
+  });
+}
+function queuePresence() {
+  queuePacket({
+    kind: 'presenza slot',
+    channel: 'control',
+    payload: packControl('P', {
+      epoch: state.epoch, cycle: Math.max(0, state.cycle),
+      rank: myRank(), hash: rosterHash()
+    }),
+    priority: 3,
+    dueAt: Date.now() + randomBetween(30, 100)
+  });
+}
+function queueJoin() {
+  const now = Date.now();
+  if (now - state.lastJoinAt < 4500) return;
+  state.lastJoinAt = now;
+  queuePacket({
+    kind: 'JOIN',
+    channel: 'control',
+    payload: packControl('J', {
+      nonce: randomId(3),
+      nameHash: rosterHash([state.name || state.id])
+    }),
+    priority: 2,
+    dueAt: now + randomBetween(80, 650)
+  });
+}
+function queueJoinAccept(target) {
+  queuePacket({
+    kind: 'JOIN accept',
+    channel: 'control',
+    payload: packControl('Y', {
+      target, epoch: state.epoch,
+      rank: onlineNodes().findIndex(node => node.id === target) + 1
+    }),
+    priority: 1,
+    dueAt: Date.now() + coordinatorIndex() * 500 + randomBetween(50, 150)
+  });
+}
+function queueIdentity(target = BROADCAST, manual = false, robust = false) {
+  const now = Date.now();
+  if (!manual && now - state.lastIdentityTxAt < 1800) return;
+  state.lastIdentityTxAt = now;
+  queuePacket({
+    kind: 'identità rapida',
+    channel: 'control',
+    payload: packControl('H', {name: state.name}),
+    priority: 1,
+    dueAt: now + randomBetween(60, 160),
+    forceRobust: robust
+  });
+}
+function announceBurst() {
+  const stableOffset = 250 + Math.round(stableIdFraction() * 1250);
+  const first = stableOffset + randomBetween(80, 650);
+  const second = first + randomBetween(1900, 3600);
+  const third = second + randomBetween(2300, 4400);
+
+  frameTimeout(() => queueIdentity(BROADCAST, true, true), first);
+  frameTimeout(() => queueIdentity(BROADCAST, true, true), second);
+  frameTimeout(() => queueIdentity(BROADCAST, true, false), third);
+}
+function queueIdentityRequest(target) {
+  queuePacket({
+    kind: 'richiesta identità',
+    channel: 'control',
+    payload: packControl('R', {target}),
+    priority: 1,
+    dueAt: Date.now() + randomBetween(80, 220)
+  });
+}
+function queueRosterExchange() {
+  queuePacket({
+    kind: 'roster coordinatori',
+    channel: 'short',
+    payload: packRoster(),
+    priority: 1,
+    dueAt: Date.now() + coordinatorIndex() * 650 + randomBetween(80, 180)
+  });
+}
+function queueRequest(outgoing) {
+  const coordinator = activeCoordinator();
+  if (!coordinator) return;
+  outgoing.requestCycle = state.cycle;
+  outgoing.status = 'requesting';
+  updateMessageStatus(outgoing.token, 'queued');
+  queuePacket({
+    kind: 'richiesta lease',
+    channel: 'control',
+    payload: packControl('Q', {
+      coordinator: coordinator.id,
+      token: outgoing.token,
+      parts: outgoing.parts.length,
+      profile: outgoing.profile
+    }),
+    priority: 1,
+    dueAt: Date.now() + randomBetween(60, 160)
+  });
+}
+function queueGrant(request) {
+  const leaseSeconds = Math.min(35, Math.max(
+    request.profile === 'S' ? 12 : 17,
+    (request.profile === 'S' ? 9 : 12) + request.parts * (request.profile === 'S' ? 3 : 5)
+  ));
+  queuePacket({
+    kind: 'grant lease',
+    channel: 'control',
+    payload: packControl('G', {
+      target: request.sender,
+      token: request.token,
+      leaseSeconds,
+      cycle: Math.max(0, state.cycle)
+    }),
+    priority: 0,
+    dueAt: Date.now() + randomBetween(120, 260),
+    afterTx: () => {
+      state.activeLease = {
+        target: request.sender, token: request.token,
+        until: Date.now() + leaseSeconds * 1000
+      };
+      state.leaseUntil = state.activeLease.until;
+    }
+  });
+}
+function queueAck(target, token, part) {
+  queuePacket({
+    kind: 'ACK',
+    channel: 'control',
+    payload: packControl('A', {target, token, part}),
+    priority: 0,
+    dueAt: Date.now() + randomBetween(70, 170)
+  });
+}
+
+async function loadModem() {
+  if (state.ggwave) return;
+  setPill(els.modemPill, 'caricamento', 'warn');
+  let lastError;
+  for (const url of CDN_URLS) {
+    try {
+      await loadScript(url);
+      if (typeof window.ggwave_factory !== 'function') throw new Error('ggwave_factory assente');
+      state.ggwave = await window.ggwave_factory();
+      setPill(els.modemPill, 'mesh modem pronto', 'on');
+      log('ggwave 0.4.0 caricato.', 'ok');
+      return;
+    } catch (error) {
+      lastError = error;
+      log(`CDN non disponibile: ${url}`, 'err');
+    }
+  }
+  setPill(els.modemPill, 'errore libreria', 'bad');
+  throw lastError || new Error('Impossibile caricare ggwave');
+}
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('Caricamento fallito'));
+    document.head.appendChild(script);
+  });
+}
+function convertTypedArray(src, type) {
+  const buffer = new ArrayBuffer(src.byteLength);
+  new src.constructor(buffer).set(src);
+  return new type(buffer);
+}
+function makeParameters(payloadLength) {
+  const parameters = state.ggwave.getDefaultParameters();
+  parameters.payloadLength = payloadLength;
+  parameters.sampleRateInp = state.context.sampleRate;
+  parameters.sampleRateOut = state.context.sampleRate;
+  parameters.sampleRate = state.context.sampleRate;
+  parameters.operatingMode =
+    state.ggwave.GGWAVE_OPERATING_MODE_RX_AND_TX |
+    state.ggwave.GGWAVE_OPERATING_MODE_USE_DSS;
+  return parameters;
+}
+async function initAudio() {
+  if (state.context) return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error('Web Audio API non supportata');
+  state.context = new AudioContextClass({sampleRate: 48000});
+  await state.context.resume();
+
+  state.instances.control = state.ggwave.init(makeParameters(CONTROL_SIZE));
+  state.instances.short = state.ggwave.init(makeParameters(SHORT_SIZE));
+  state.instances.long = state.ggwave.init(makeParameters(LONG_SIZE));
+
+  if (!state.instances.control || !state.instances.short || !state.instances.long) {
+    throw new Error('Inizializzazione modem fixed-length fallita');
+  }
+}
+async function startNetwork() {
+  if (state.running) {
+    stopNetwork();
+    return;
+  }
+
+  const name = els.nameInput.value.trim();
+  const room = els.roomInput.value.trim() || 'LOCALE';
+  if (!name) {
+    showToast('Inserisci prima il nome');
+    els.nameInput.focus();
+    return;
+  }
+
+  state.name = name.slice(0, 20);
+  state.room = room.slice(0, 12);
+  persist();
+
+  try {
+    await loadModem();
+    await initAudio();
+    await state.context.resume();
+
+    state.stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 1
+      }
+    });
+
+    state.mediaSource = state.context.createMediaStreamSource(state.stream);
+    state.processor = state.context.createScriptProcessor
+      ? state.context.createScriptProcessor(1024, 1, 1)
+      : state.context.createJavaScriptNode(1024, 1, 1);
+
+    state.processor.onaudioprocess = onAudio;
+    state.mediaSource.connect(state.processor);
+    state.processor.connect(state.context.destination);
+
+    state.running = true;
+    state.networkStartedAt = Date.now();
+    state.joined = false;
+    state.heartbeatSequence = Math.floor(stableIdFraction() * 997);
+    state.heartbeatBackoff = 0;
+    scheduleNextDirectHeartbeat();
+    state.schedulerTimer = setInterval(processQueue, 65);
+    state.maintenanceTimer = setInterval(maintenance, 300);
+
+    setPill(els.micPill, 'attivo', 'on');
+    setPill(els.channelPill, 'attesa SYNC', 'warn');
+    els.startBtn.textContent = 'Ferma rete';
+    els.startBtn.classList.add('danger');
+    els.announceBtn.disabled = false;
+    els.sendBtn.disabled = false;
+
+    requestWakeLock();
+    await restorePersistentQueue();
+    announceBurst();
+    log(`AudioChat avviata · coda persistente attiva per 7 giorni`, 'ok');
+    renderAll();
+  } catch (error) {
+    log(`Avvio fallito: ${error.message}`, 'err');
+    setPill(els.micPill, 'errore', 'bad');
+    alert('Non riesco ad avviare il modem. Verifica HTTPS, connessione e permesso microfono.');
+  }
+}
+function stopNetwork() {
+  state.running = false;
+  clearInterval(state.schedulerTimer);
+  clearInterval(state.maintenanceTimer);
+  state.schedulerTimer = state.maintenanceTimer = null;
+  clearFrameTimers();
+
+  if (state.processor) {
+    state.processor.disconnect();
+    state.processor.onaudioprocess = null;
+  }
+  if (state.mediaSource) state.mediaSource.disconnect();
+  if (state.stream) state.stream.getTracks().forEach(track => track.stop());
+
+  state.processor = state.mediaSource = state.stream = null;
+  state.nextDirectBeaconAt = 0;
+  state.heartbeatBackoff = 0;
+  state.txQueue = [];
+  for (const pending of state.awaitingAck.values()) clearTimeout(pending.timer);
+  state.awaitingAck.clear();
+
+  if (state.wakeLock) {
+    try { state.wakeLock.release(); } catch {}
+    state.wakeLock = null;
+  }
+
+  setPill(els.micPill, 'spento');
+  setPill(els.channelPill, 'inattivo');
+  els.startBtn.textContent = 'Avvia rete';
+  els.startBtn.classList.remove('danger');
+  els.announceBtn.disabled = true;
+  els.sendBtn.disabled = true;
+  log('Mesh fermata.');
+  renderAll();
+}
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) state.wakeLock = await navigator.wakeLock.request('screen');
+  } catch {}
+}
+function onAudio(event) {
+  const input = event.inputBuffer.getChannelData(0);
+  const output = event.outputBuffer.getChannelData(0);
+  output.fill(0);
+
+  let sum = 0;
+  for (let index = 0; index < input.length; index++) sum += input[index] * input[index];
+  if (Math.sqrt(sum / input.length) > 0.018) {
+    state.busyUntil = Math.max(state.busyUntil, Date.now() + 150);
+  }
+
+  if (state.transmitting) return;
+  const raw = convertTypedArray(new Float32Array(input), Int8Array);
+  decodeFixed('control', raw, CONTROL_SIZE);
+  decodeFixed('short', raw, SHORT_SIZE);
+  decodeFixed('long', raw, LONG_SIZE);
+}
+function decodeFixed(channel, raw, size) {
+  try {
+    const result = state.ggwave.decode(state.instances[channel], raw);
+    if (!result || !result.length) return;
+    const packet = new TextDecoder('utf-8').decode(result);
+    state.busyUntil = Date.now() + 180;
+
+    if (channel === 'control') {
+      const decoded = unpackControl(packet);
+      if (decoded) handleControl(decoded);
+      return;
+    }
+
+    const shortControl = channel === 'short' ? unpackShortControl(packet) : null;
+    if (shortControl) {
+      handleShortControl(shortControl);
+      return;
+    }
+
+    const data = unpackData(packet, size);
+    if (data) handleData(data);
+  } catch (error) {
+    log(`Decoder ${channel}: ${error.message}`, 'err');
+  }
+}
+async function processQueue() {
+  if (!state.running || state.transmitting || !state.txQueue.length) return;
+
+  const now = Date.now();
+  state.txQueue.sort((a, b) => a.priority - b.priority || a.dueAt - b.dueAt);
+  const index = state.txQueue.findIndex(item => item.dueAt <= now);
+  if (index < 0 || now < state.busyUntil) return;
+
+  const item = state.txQueue.splice(index, 1)[0];
+
+  // Durante una lease possono partire soltanto i frammenti del messaggio concesso e i relativi ACK.
+  if (now < state.leaseUntil && item.kind !== 'ACK' && !item.messageId) {
+    item.dueAt = state.leaseUntil + randomBetween(80, 220);
+    queuePacket(item);
+    return;
+  }
+
+  state.transmitting = true;
+  renderIdentity();
+
+  try {
+    item.attempts++;
+    if (item.messageId) updateMessageStatus(item.messageId, 'transmitting');
+
+    const duration = await transmit(
+      item.channel, item.payload, item.attempts, item.forceRobust === true
+    );
+    log(`TX ${item.kind} · ${item.payload.length} B · ${(duration / 1000).toFixed(2)}s`);
+    state.busyUntil = Date.now() + 150;
+
+    if (typeof item.afterTx === 'function') item.afterTx();
+
+    if (item.requiresAck) {
+      const key = `${item.messageId}:${item.part}`;
+      const timer = setTimeout(
+        () => ackTimeout(key),
+        ACK_TIMEOUT + Math.min(2600, duration * 0.25)
+      );
+      state.awaitingAck.set(key, {item, timer});
+    } else if (item.messageId) {
+      markBroadcastPartSent(item.messageId, item.part);
+    }
+  } catch (error) {
+    log(`TX fallita: ${error.message}`, 'err');
+    if (item.messageId) updateMessageStatus(item.messageId, 'failed');
+  } finally {
+    state.transmitting = false;
+    renderIdentity();
+  }
+}
+function transmit(channel, payload, attempt = 1, forceRobust = false) {
+  return new Promise((resolve, reject) => {
+    try {
+      const protocol = (forceRobust || attempt >= MAX_ATTEMPTS)
+        ? state.ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FAST
+        : state.ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FASTEST;
+
+      const waveform = state.ggwave.encode(
+        state.instances[channel], payload, protocol, state.volume
+      );
+      const samples = convertTypedArray(waveform, Float32Array);
+      const buffer = state.context.createBuffer(1, samples.length, state.context.sampleRate);
+      buffer.getChannelData(0).set(samples);
+
+      const source = state.context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(state.context.destination);
+      const duration = buffer.duration * 1000;
+      source.onended = () => {
+        source.disconnect();
+        resolve(duration);
+      };
+      source.start();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+function removeQueuedTransmissionItems(token) {
+  state.txQueue = state.txQueue.filter(item => item.messageId !== token);
+  for (const [key, pending] of state.awaitingAck) {
+    if (pending.item.messageId !== token) continue;
+    clearTimeout(pending.timer);
+    state.awaitingAck.delete(key);
+  }
+}
+
+function parkOutgoing(token, reason = 'destinatario non raggiungibile') {
+  const outgoing = state.outgoing.get(token);
+  if (!outgoing || outgoing.status === 'delivered') return;
+
+  removeQueuedTransmissionItems(token);
+  outgoing.status = 'waiting_offline';
+  outgoing.requestCycle = -1;
+  outgoing.lastParkedAt = Date.now();
+  outgoing.lastReason = reason;
+
+  const message = findMessage(token);
+  if (message && message.status !== 'delivered') {
+    message.status = 'waiting_offline';
+  }
+
+  queueDbPut(outgoing);
+  persist();
+  renderConversation();
+  log(`Messaggio ${token} conservato in coda: ${reason}.`);
+}
+
+function resumePendingForPeer(peerId) {
+  if (!state.running || !state.devices.has(peerId)) return;
+  if (Date.now() < state.leaseUntil || state.transmitting) return;
+
+  const pending = [...state.outgoing.values()]
+    .filter(item =>
+      item.target === peerId &&
+      item.status === 'waiting_offline' &&
+      Date.now() - item.createdAt <= QUEUE_RETENTION_MS
+    )
+    .sort((a, b) => a.createdAt - b.createdAt)[0];
+
+  if (!pending) return;
+
+  pending.status = 'waiting';
+  pending.requestCycle = -1;
+  pending.resumeCount = Number(pending.resumeCount || 0) + 1;
+  queueDbPut(pending);
+  updateMessageStatus(pending.token, 'queued');
+
+  if (directMode()) {
+    const leaseSeconds = Math.min(35, Math.max(
+      pending.profile === 'S' ? 12 : 17,
+      (pending.profile === 'S' ? 9 : 12) +
+      pending.parts.length * (pending.profile === 'S' ? 3 : 5)
+    ));
+    state.activeLease = {
+      target: state.id,
+      token: pending.token,
+      cycle: Math.max(0, state.cycle),
+      until: Date.now() + leaseSeconds * 1000
+    };
+    state.leaseUntil = state.activeLease.until;
+    showToast('Destinatario tornato: riprendo la consegna');
+    startGrantedTransmission(pending.token);
+  } else {
+    showToast('Destinatario tornato: messaggio rimesso in coda');
+  }
+}
+
+function ackTimeout(key) {
+  const pending = state.awaitingAck.get(key);
+  if (!pending) return;
+  state.awaitingAck.delete(key);
+
+  const item = pending.item;
+  if (item.attempts < MAX_ATTEMPTS) {
+    item.dueAt = Date.now() + 300 + item.attempts * 380;
+    item.priority = 1;
+    queuePacket(item);
+    updateMessageStatus(item.messageId, 'granted');
+    log(`ACK assente · ritento ${item.messageId} parte ${item.part + 1}/${item.total}`);
+  } else {
+    parkOutgoing(item.messageId, 'ACK non ricevuto dopo tre tentativi');
+  }
+}
+
+function acceptSync(sync, local = false) {
+  touchDevice(sync.sender);
+  if (!local && !termIsNewer(sync.epoch, sync.cycle, sync.sender)) return;
+
+  state.epoch = sync.epoch;
+  state.cycle = sync.cycle;
+  state.frameAnchor = Date.now();
+  state.lastSyncAt = state.frameAnchor;
+  state.nextFrameAt = state.frameAnchor + FRAME_MS;
+  state.currentSyncSender = sync.sender;
+  state.currentRosterHash = sync.hash;
+  state.syncQueuedFor = '';
+  state.joined = state.joined || sync.sender === state.id;
+
+  clearFrameTimers();
+  scheduleFrame(sync);
+
+  const localHash = rosterHash();
+  const mismatch = localHash !== sync.hash || rosterIds().length !== sync.count;
+  state.coordinatorAgreement = mismatch ? 'roster da riconciliare' : 'coordinatori allineati';
+
+  log(
+    `${local ? 'TX/locale' : 'RX'} SYNC e${sync.epoch} c${sync.cycle} da ${sync.sender}` +
+    ` · roster ${sync.count}/${sync.hash}${mismatch ? ' ≠ locale ' + rosterIds().length + '/' + localHash : ''}`,
+    mismatch ? '' : 'ok'
+  );
+  renderAll();
+}
+function scheduleFrame(sync) {
+  const coords = coordinators();
+  const backup = backupCoordinator(sync.cycle);
+
+  if (backup?.id === state.id && sync.sender !== state.id) {
+    frameTimeout(() => {
+      const status = rosterHash() === sync.hash && rosterIds().length === sync.count ? 'O' : 'M';
+      queueVote(sync, status);
+      if (status === 'M') queueRosterExchange();
+    }, 180);
+  }
+
+  // Ogni membro non coordinatore possiede uno slot stabile dopo SYNC e conferma.
+  const memberList = members();
+  const memberIndex = memberList.findIndex(node => node.id === state.id);
+  if (memberIndex >= 0) {
+    const delay = CONTROL_SLOT_MS + memberIndex * CONTROL_SLOT_MS;
+    frameTimeout(memberSlotAction, delay);
+  }
+
+  // I coordinatori con messaggi in uscita inseriscono la richiesta dopo il voto.
+  if (isCoordinator()) {
+    frameTimeout(() => {
+      const outgoing = nextOutgoingWaiting();
+      if (outgoing && outgoing.requestCycle !== state.cycle) queueRequest(outgoing);
+    }, CONTROL_SLOT_MS + coordinatorIndex() * 260);
+  }
+
+  // Un dispositivo non ancora ammesso usa la finestra JOIN dopo gli slot membri.
+  if (!state.joined) {
+    const joinDelay = CONTROL_SLOT_MS + memberList.length * CONTROL_SLOT_MS + randomBetween(250, 900);
+    frameTimeout(queueJoin, joinDelay);
+  }
+}
+function memberSlotAction() {
+  if (!state.running || Date.now() < state.leaseUntil) return;
+  const outgoing = nextOutgoingWaiting();
+  if (outgoing && outgoing.requestCycle !== state.cycle) {
+    queueRequest(outgoing);
+  } else {
+    queuePresence();
+  }
+}
+function nextOutgoingWaiting() {
+  return [...state.outgoing.values()]
+    .filter(item => !['delivered', 'failed', 'sending'].includes(item.status))
+    .sort((a, b) => a.createdAt - b.createdAt)[0] || null;
+}
+function maintenance() {
+  const now = Date.now();
+  let changed = false;
+
+  for (const [id, device] of state.devices) {
+    if (now - device.lastSeen > DEVICE_TIMEOUT) {
+      state.devices.delete(id);
+      changed = true;
+
+      for (const outgoing of state.outgoing.values()) {
+        if (outgoing.target === id && outgoing.status !== 'delivered') {
+          parkOutgoing(outgoing.token, 'destinatario uscito dalla pagina');
+        }
+      }
+
+      log(`Dispositivo offline: ${device.name || id}`);
+    }
+  }
+
+  for (const [key, assembly] of state.assemblies) {
+    if (now - assembly.ts > 90000) state.assemblies.delete(key);
+  }
+
+  if (state.activeLease && now >= state.activeLease.until) {
+    state.activeLease = null;
+    state.leaseUntil = 0;
+  }
+
+  if (directMode()) {
+    state.joined = true;
+    state.coordinatorAgreement = onlineNodes().length === 2
+      ? 'collegamento diretto'
+      : 'in attesa di un dispositivo';
+
+    if (now >= state.nextDirectBeaconAt && now >= state.leaseUntil) {
+      if (now < state.busyUntil || state.transmitting) {
+        state.heartbeatBackoff = Math.min(
+          12000,
+          Math.max(900, state.heartbeatBackoff * 1.7 + randomBetween(400, 1800))
+        );
+        scheduleNextDirectHeartbeat(now);
+      } else {
+        const dueJitter =
+          120 +
+          stableIdFraction() * 850 +
+          cryptoFraction() * 1500;
+
+        queuePacket({
+          kind: 'presenza diretta adattiva',
+          channel: 'control',
+          payload: packControl('P', {
+            epoch: 0,
+            cycle: state.heartbeatSequence % 1296,
+            rank: myRank(),
+            hash: rosterHash()
+          }),
+          priority: 4,
+          dueAt: now + dueJitter,
+          forceRobust: false,
+          afterTx: () => {
+            state.lastHeartbeatTxAt = Date.now();
+            state.heartbeatBackoff = Math.max(
+              0,
+              state.heartbeatBackoff * 0.35 - 300
+            );
+          }
+        });
+
+        scheduleNextDirectHeartbeat(now);
+      }
+    }
+
+    // La vecchia temporizzazione mesh viene azzerata; si riattiverà da tre nodi.
+    state.lastSyncAt = 0;
+    state.syncQueuedFor = '';
+  } else if (!state.lastSyncAt) {
+    if (now - state.networkStartedAt > 1500) {
+      if (coordinatorIndex() === 0) {
+        state.joined = true;
+        queueSync(0, 0, false);
+      } else if (now - state.lastJoinAt > 4500) {
+        queueJoin();
+      }
+    }
+  } else if (now >= state.nextFrameAt && now >= state.leaseUntil) {
+    const nextCycle = state.cycle + 1;
+    const expected = activeCoordinator(nextCycle);
+    const key = `${state.epoch}:${nextCycle}`;
+
+    if (expected?.id === state.id) {
+      queueSync(state.epoch, nextCycle, false);
+    } else if (
+      isCoordinator() &&
+      now >= state.nextFrameAt + TAKEOVER_GRACE_MS + coordinatorIndex() * 700 &&
+      state.syncQueuedFor !== key
+    ) {
+      state.coordinatorAgreement = 'failover coordinatore';
+      queueSync(state.epoch + 1, nextCycle, true);
+    }
+  }
+
+  // Il coordinatore attivo assegna una sola lease alla volta.
+  if (
+    !directMode() &&
+    activeCoordinator()?.id === state.id &&
+    now >= state.leaseUntil &&
+    state.pendingRequests.size
+  ) {
+    const requests = [...state.pendingRequests.values()]
+      .sort((a, b) => a.receivedAt - b.receivedAt);
+    const request = requests[0];
+    state.pendingRequests.delete(request.token);
+    queueGrant(request);
+  }
+
+  if (changed) {
+    state.coordinatorAgreement = 'roster modificato';
+    if (isCoordinator()) queueRosterExchange();
+    renderAll();
+  } else {
+    renderIdentity();
+    renderDevices();
+  }
+}
+
+function handleControl(packet) {
+  const firstSeen = touchDevice(packet.sender);
+  const {type, sender, body} = packet;
+
+  if (type === 'H') {
+    const length = fromB36(body[0]);
+    const name = body.slice(1, 1 + length) || sender;
+    touchDevice(sender, name);
+    if (firstSeen) queueIdentity(sender, false, true);
+    log(`RX identità rapida ${name} (${sender})`, 'ok');
+    renderAll();
+    return;
+  }
+
+  if (type === 'C') {
+    acceptSync({
+      sender,
+      epoch: fromB36(body.slice(0, 2)),
+      cycle: fromB36(body.slice(2, 4)),
+      count: fromB36(body[4]),
+      hash: body.slice(5, 9),
+      coordinatorCount: fromB36(body[9])
+    }, false);
+    return;
+  }
+
+  if (type === 'V') {
+    const leader = body.slice(0, 7);
+    const epoch = fromB36(body.slice(7, 9));
+    const cycle = fromB36(body.slice(9, 11));
+    const hash = body.slice(11, 15);
+    const status = body[15];
+
+    if (leader !== state.id || epoch !== state.epoch || cycle !== state.cycle) return;
+    state.lastConfirmAt = Date.now();
+
+    if (status === 'O' && hash === rosterHash()) {
+      state.coordinatorAgreement = `confermato da ${sender}`;
+      log(`RX conferma coordinatore da ${sender}`, 'ok');
+    } else {
+      state.coordinatorAgreement = `divergenza con ${sender}`;
+      log(`Roster divergente con coordinatore ${sender}`);
+      queueRosterExchange();
+    }
+    renderAll();
+    return;
+  }
+
+  if (type === 'P') {
+    const hash = body.slice(5, 9);
+
+    if (directMode()) {
+      const distance = state.nextDirectBeaconAt - Date.now();
+      if (distance > -1200 && distance < 2800) {
+        state.heartbeatBackoff = Math.min(
+          12000,
+          state.heartbeatBackoff + 1200 + cryptoFraction() * 3200
+        );
+        scheduleNextDirectHeartbeat();
+        log(`Heartbeat di ${sender}: fase locale spostata.`);
+      }
+    }
+
+    if (firstSeen) {
+      queueIdentityRequest(sender);
+      queueIdentity(sender, false, true);
+    }
+    if (!directMode() && isCoordinator() && hash !== rosterHash()) queueRosterExchange();
+    renderAll();
+    return;
+  }
+
+  if (type === 'J') {
+    if (onlineNodes().length >= MAX_NODES && !state.devices.has(sender)) {
+      log(`JOIN ignorato: rete piena (${sender})`, 'err');
+      return;
+    }
+    touchDevice(sender);
+    if (isCoordinator()) {
+      queueJoinAccept(sender);
+      queueIdentityRequest(sender);
+      queueIdentity(BROADCAST, false);
+    }
+    return;
+  }
+
+  if (type === 'Y') {
+    const target = body.slice(0, 7);
+    if (target !== state.id) return;
+    state.epoch = Math.max(state.epoch, fromB36(body.slice(7, 9)));
+    state.joined = true;
+    queueIdentity(BROADCAST, true);
+    showToast('Ingresso nella mesh confermato');
+    log(`JOIN accettato da coordinatore ${sender}`, 'ok');
+    return;
+  }
+
+  if (type === 'R') {
+    const target = body.slice(0, 7);
+    if (target === state.id || target === BROADCAST) queueIdentity(sender, false);
+    return;
+  }
+
+  if (type === 'Q') {
+    const coordinator = body.slice(0, 7);
+    const token = body.slice(7, 12);
+    const parts = fromB36(body[12]);
+    const profile = body[13] || 'L';
+
+    // Tutti i coordinatori memorizzano la richiesta; soltanto quello attivo concede.
+    if (isCoordinator()) {
+      state.pendingRequests.set(token, {
+        sender, token, parts, profile, receivedAt: Date.now()
+      });
+      log(`RX richiesta lease ${token} da ${sender} · coordinatori sincronizzati`);
+    }
+
+    if (coordinator !== activeCoordinator()?.id) {
+      state.coordinatorAgreement = 'richiesta riallineata al coordinatore attivo';
+    }
+    return;
+  }
+
+  if (type === 'G') {
+    const target = body.slice(0, 7);
+    const token = body.slice(7, 12);
+    const leaseSeconds = fromB36(body[12]);
+    const cycle = fromB36(body.slice(13, 15));
+
+    state.pendingRequests.delete(token);
+    state.activeLease = {
+      target, token, cycle,
+      until: Date.now() + leaseSeconds * 1000
+    };
+    state.leaseUntil = state.activeLease.until;
+
+    if (target === state.id) startGrantedTransmission(token);
+    return;
+  }
+
+  if (type === 'A') {
+    const target = body.slice(0, 7);
+    const token = body.slice(7, 12);
+    const part = fromB36(body[12]);
+    if (target !== state.id) return;
+
+    const key = `${token}:${part}`;
+    const pending = state.awaitingAck.get(key);
+    if (!pending) return;
+
+    clearTimeout(pending.timer);
+    state.awaitingAck.delete(key);
+    markChunkAcked(token, part);
+    log(`RX ACK ${token} parte ${part + 1}`, 'ok');
+  }
+}
+
+function handleShortControl(packet) {
+  const firstSeen = touchDevice(packet.sender);
+  const {type, sender, body} = packet;
+
+  if (type === 'I') {
+    const target = body.slice(0, 7);
+    if (target !== state.id && target !== BROADCAST) return;
+    const length = fromB36(body.slice(7, 9));
+    let name = sender;
+    try { name = b64ToText(body.slice(9, 9 + length)) || sender; } catch {}
+    touchDevice(sender, name);
+    if (firstSeen) queueIdentity(sender, false, true);
+    showToast(`${name} è disponibile`);
+    log(`RX identità ${name} (${sender})`, 'ok');
+    renderAll();
+    return;
+  }
+
+  if (type === 'L') {
+    const trustedCoordinator =
+      isCoordinator(sender) ||
+      sender === state.currentSyncSender ||
+      sender === backupCoordinator()?.id;
+    if (!trustedCoordinator) return;
+    const epoch = fromB36(body.slice(0, 2));
+    const cycle = fromB36(body.slice(2, 4));
+    const count = fromB36(body[4]);
+    const ids = [];
+    for (let index = 0; index < count; index++) {
+      const id = body.slice(5 + index * 7, 12 + index * 7);
+      if (id.length === 7) ids.push(id);
+    }
+
+    let added = false;
+    for (const id of ids) {
+      if (id === state.id || state.devices.has(id)) continue;
+      if (onlineNodes().length >= MAX_NODES) break;
+      touchDevice(id);
+      queueIdentityRequest(id);
+      added = true;
+    }
+
+    if (added || rosterHash(ids.sort()) !== rosterHash()) {
+      state.epoch = Math.max(state.epoch, epoch);
+      state.coordinatorAgreement = `roster unito con ${sender}`;
+      log(`RX roster coordinatore ${sender}: ${ids.join(' > ')}`);
+      if (isCoordinator()) queueRosterExchange();
+    } else {
+      state.coordinatorAgreement = `roster concorde con ${sender}`;
+    }
+    renderAll();
+  }
+}
+
+function handleData(packet) {
+  const {sender, target, token, part, total, text} = packet;
+  if (target !== state.id && target !== BROADCAST) return;
+
+  const firstSeen = touchDevice(sender);
+  if (firstSeen) queueIdentity(sender, false, true);
+  if (target === state.id) queueAck(sender, token, part);
+
+  const key = `${sender}:${token}`;
+  let assembly = state.assemblies.get(key);
+  if (!assembly) {
+    assembly = {
+      sender, target, token, total,
+      parts: Array(total), ts: Date.now()
+    };
+    state.assemblies.set(key, assembly);
+  }
+
+  if (assembly.total !== total || part >= total) return;
+  assembly.parts[part] = text;
+  assembly.ts = Date.now();
+
+  if (assembly.parts.filter(value => value !== undefined).length !== total) return;
+
+  state.assemblies.delete(key);
+  const seenKey = `${sender}:${token}`;
+  if (state.seenMessages.has(seenKey) || findMessage(token)) return;
+  state.seenMessages.add(seenKey);
+
+  const device = state.devices.get(sender);
+  const peer = target === BROADCAST ? BROADCAST : sender;
+  history(peer).push({
+    id: token, from: sender, fromName: device?.name || sender,
+    to: target, text: assembly.parts.join(''),
+    ts: Date.now(), direction: 'in', status: 'received'
+  });
+  trimHistory(peer);
+
+  if (state.selected !== peer) state.unread[peer] = (state.unread[peer] || 0) + 1;
+  persist();
+  renderAll();
+  showToast(`Messaggio da ${device?.name || sender}`);
+  log(`RX messaggio ${token} completo (${total} parti)`, 'ok');
+}
+
+function buildMessageParts(text) {
+  const chunks = splitUtf8(text, LONG_UTF8_BYTES);
+  return chunks.map(chunk => {
+    const bytes = new TextEncoder().encode(chunk).length;
+    const short = bytes <= SHORT_UTF8_BYTES;
+    return {
+      text: chunk,
+      channel: short ? 'short' : 'long',
+      size: short ? SHORT_SIZE : LONG_SIZE,
+      type: short ? 'S' : 'M'
+    };
+  });
+}
+function sendCurrent() {
+  const text = els.messageInput.value.trim();
+  if (!text || !state.running) return;
+
+  const target = state.selected;
+  if (target !== BROADCAST && !state.devices.has(target)) {
+    showToast('Il dispositivo non è disponibile');
+    return;
+  }
+
+  const parts = buildMessageParts(text);
+  if (parts.length > 35) {
+    showToast('Messaggio troppo lungo per la rete acustica');
+    return;
+  }
+
+  const token = tokenId();
+  const profile = parts.some(part => part.channel === 'long') ? 'L' : 'S';
+  const outgoing = {
+    token, target, text, parts, profile,
+    status: 'waiting', requestCycle: -1,
+    createdAt: Date.now()
+  };
+  state.outgoing.set(token, outgoing);
+  queueDbPut(outgoing);
+
+  history(target).push({
+    id: token, from: state.id, fromName: state.name, to: target,
+    text, ts: Date.now(), direction: 'out', status: 'queued',
+    total: parts.length, acked: [], sentParts: []
+  });
+  trimHistory(target);
+  persist();
+
+  els.messageInput.value = '';
+  autoGrow();
+  renderConversation();
+  if (directMode()) {
+    const leaseSeconds = Math.min(35, Math.max(
+      profile === 'S' ? 12 : 17,
+      (profile === 'S' ? 9 : 12) + parts.length * (profile === 'S' ? 3 : 5)
+    ));
+    state.activeLease = {
+      target: state.id, token, cycle: Math.max(0, state.cycle),
+      until: Date.now() + leaseSeconds * 1000
+    };
+    state.leaseUntil = state.activeLease.until;
+    showToast('Invio diretto avviato');
+    startGrantedTransmission(token);
+    return;
+  }
+
+  showToast('Messaggio in attesa dello slot coordinato');
+
+  // Un coordinatore attivo può registrare localmente la propria richiesta.
+  if (activeCoordinator()?.id === state.id && Date.now() >= state.leaseUntil) {
+    state.pendingRequests.set(token, {
+      sender: state.id, token, parts: parts.length,
+      profile, receivedAt: Date.now()
+    });
+  }
+}
+function startGrantedTransmission(token) {
+  const outgoing = state.outgoing.get(token);
+  if (!outgoing || outgoing.status === 'sending' || outgoing.status === 'delivered') return;
+
+  removeQueuedTransmissionItems(token);
+  outgoing.status = 'sending';
+  outgoing.requestCycle = -1;
+  outgoing.acked = Array.isArray(outgoing.acked) ? outgoing.acked : [];
+
+  const message = findMessage(token);
+  const acknowledged = new Set([
+    ...(outgoing.acked || []),
+    ...(message?.acked || [])
+  ]);
+
+  updateMessageStatus(token, 'granted');
+  queueDbPut(outgoing);
+
+  let queued = 0;
+  outgoing.parts.forEach((part, index) => {
+    if (acknowledged.has(index)) return;
+    queued++;
+
+    queuePacket({
+      kind: part.channel === 'short' ? 'testo breve' : 'testo',
+      channel: part.channel,
+      payload: packData(
+        part.type, outgoing.target, token, index,
+        outgoing.parts.length, part.text, part.size
+      ),
+      priority: 1,
+      dueAt: Date.now() + 260 + queued * 220,
+      messageId: token,
+      part: index,
+      total: outgoing.parts.length,
+      requiresAck: outgoing.target !== BROADCAST
+    });
+  });
+
+  if (!queued) {
+    outgoing.status = 'delivered';
+    updateMessageStatus(token, 'delivered');
+    queueDbDelete(token);
+  }
+}
+function findMessage(id) {
+  for (const list of Object.values(state.histories)) {
+    const found = list.find(message => message.id === id);
+    if (found) return found;
+  }
+  return null;
+}
+function markChunkAcked(id, part) {
+  const message = findMessage(id);
+  if (!message) return;
+  message.acked ||= [];
+  if (!message.acked.includes(part)) message.acked.push(part);
+  message.status = message.acked.length >= message.total ? 'delivered' : 'transmitting';
+
+  const outgoing = state.outgoing.get(id);
+  if (outgoing) {
+    outgoing.acked = [...new Set([...(outgoing.acked || []), part])];
+    outgoing.status = message.status === 'delivered' ? 'delivered' : 'sending';
+
+    if (message.status === 'delivered') {
+      state.outgoing.delete(id);
+      queueDbDelete(id);
+    } else {
+      queueDbPut(outgoing);
+    }
+  }
+
+  persist();
+  renderConversation();
+
+  // Consegna il messaggio successivo allo stesso contatto, se presente.
+  if (message.status === 'delivered') {
+    setTimeout(() => resumePendingForPeer(message.to), 700);
+  }
+}
+function markBroadcastPartSent(id, part) {
+  const message = findMessage(id);
+  if (!message) return;
+  message.sentParts ||= [];
+  if (!message.sentParts.includes(part)) message.sentParts.push(part);
+  if (message.sentParts.length >= message.total) {
+    message.status = 'delivered';
+    state.outgoing.delete(id);
+    queueDbDelete(id);
+  }
+  persist();
+  renderConversation();
+}
+function updateMessageStatus(id, status) {
+  const message = findMessage(id);
+  if (!message) return;
+  if (message.status === 'delivered' && status !== 'delivered') return;
+
+  message.status = status;
+  const outgoing = state.outgoing.get(id);
+  if (outgoing) {
+    outgoing.status = status === 'queued' ? 'waiting' : status;
+    if (status === 'delivered') {
+      state.outgoing.delete(id);
+      queueDbDelete(id);
+    } else {
+      queueDbPut(outgoing);
+    }
+  }
+
+  persist();
+  renderConversation();
+}
+function saveIdentity() {
+  const name = els.nameInput.value.trim();
+  const room = els.roomInput.value.trim() || 'LOCALE';
+  if (!name) {
+    showToast('Inserisci un nome');
+    return;
+  }
+
+  const roomChanged = state.room !== room;
+  state.name = name.slice(0, 20);
+  state.room = room.slice(0, 12);
+  persist();
+
+  if (roomChanged) {
+    state.devices.clear();
+    state.selected = BROADCAST;
+    state.joined = false;
+    state.epoch = 0;
+    state.cycle = -1;
+    state.lastSyncAt = 0;
+    state.txQueue = [];
+    showToast('Canale cambiato: mesh azzerata');
+  }
+
+  if (state.running) queueIdentity(BROADCAST, true);
+  renderAll();
+}
+function autoGrow() {
+  els.messageInput.style.height = 'auto';
+  els.messageInput.style.height = Math.min(120, els.messageInput.scrollHeight) + 'px';
+}
+
+els.startBtn.onclick = startNetwork;
+els.announceBtn.onclick = () => {
+  if (!directMode() && !state.joined) queueJoin();
+  announceBurst();
+  showToast('Tre presentazioni programmate');
+};
+els.saveIdentity.onclick = saveIdentity;
+els.sendBtn.onclick = sendCurrent;
+els.messageInput.addEventListener('input', autoGrow);
+els.messageInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendCurrent();
+  }
+});
+els.openSidebar.onclick = () => els.sidebar.classList.add('open');
+els.closeSidebar.onclick = () => els.sidebar.classList.remove('open');
+els.settingsBtn.onclick = () => els.settingsOverlay.classList.add('open');
+els.hierarchyBtn.onclick = () => {
+  renderHierarchy();
+  els.hierarchyOverlay.classList.add('open');
+};
+els.guideBtn.onclick = () => els.guideOverlay.classList.add('open');
+$$('.modalClose').forEach(button => button.onclick = closeOverlays);
+$$('.overlay').forEach(overlay => overlay.addEventListener('click', event => {
+  if (event.target === overlay) closeOverlays();
+}));
+els.logBtn.onclick = () => els.logPanel.classList.toggle('open');
+els.volumeInput.oninput = () => {
+  state.volume = Number(els.volumeInput.value);
+  els.volumeValue.textContent = state.volume;
+  persist();
+};
+els.clearDataBtn.onclick = () => {
+  if (confirm('Cancellare identità, messaggi e impostazioni locali?')) {
+    localStorage.removeItem('audiochat4.state');
+    localStorage.removeItem('audiochat3.state');
+    try {
+      state.queueDb?.close();
+      indexedDB.deleteDatabase(QUEUE_DB_NAME);
+    } catch {}
+    location.reload();
+  }
+};
+
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && state.running) {
+    try {
+      await state.context.resume();
+      await requestWakeLock();
+      state.joined = directMode();
+      state.heartbeatBackoff = randomBetween(500, 3500);
+      scheduleNextDirectHeartbeat();
+      if (directMode()) announceBurst();
+      else frameTimeout(queueJoin, randomBetween(500, 2600));
+      log('Pagina riattivata; fase heartbeat ricalcolata.');
+    } catch {}
+  }
+});
+window.addEventListener('beforeunload', () => {
+  if (state.stream) state.stream.getTracks().forEach(track => track.stop());
+  if (state.ggwave) {
+    for (const instance of Object.values(state.instances)) {
+      try { if (instance) state.ggwave.free(instance); } catch {}
+    }
+  }
+});
+
+persist();
+renderAll();
+restorePersistentQueue();
+setPill(els.modemPill, 'da caricare', 'warn');
+els.guideOverlay.classList.add('open');
+log(`AudioChat ${VERSION} pronto · coda IndexedDB con scadenza 7 giorni`);
+})();
+</script>
+</body>
+</html>
