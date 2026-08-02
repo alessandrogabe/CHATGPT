@@ -1,4 +1,4 @@
-# AudioMesh Protocol 6.1
+# AudioMesh Protocol 6.1.1
 
 AudioMesh is an experimental open acoustic mesh protocol for local communication through microphones and loudspeakers.
 
@@ -68,10 +68,15 @@ The network name, device name, packet type, source, destination and application 
 - per-fragment DATA_ACK
 - persistent sender-side outbox through IndexedDB
 - retry and delayed delivery when the recipient returns
+- 16-bit message identifiers aligned with acknowledgement and lease frames
+- duplicate reservation suppression
+- broadcast completion without impossible per-recipient ACK waiting
 
 ## Security scope
 
 An observer without the network key can detect acoustic digital activity but cannot authenticate or interpret a frame. Traffic timing and the existence of acoustic activity remain physically observable.
+
+The implementation is experimental and has not undergone an independent cryptographic or security audit. It should not yet be used for safety-critical or high-confidentiality communication.
 
 ## License
 
