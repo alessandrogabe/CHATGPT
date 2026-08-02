@@ -1,0 +1,520 @@
+', {
+      epoch, cycle, count: rosterIds().length,
+      hash: rosterHash(), coordinatorCount: coordinatorCount()
+    }),
+    priority: 0,
+    dueAt: Date.now() + randomBetween(40, 120),
+    afterTx: () => acceptSync({
+      sender: state.id, epoch, cycle, count: rosterIds().length,
+      hash: rosterHash(), coordinatorCount: coordinatorCount()
+    }, true)
+  });
+}
+function queueVote(sync, status) {
+  queuePacket({
+    kind: 'conferma coordinatore',
+    channel: 'control',
+    payload: packControl('V', {
+      leader: sync.sender, epoch: sync.epoch, cycle: sync.cycle,
+      hash: rosterHash(), status
+    }),
+    priority: 0,
+    dueAt: Date.now() + randomBetween(80, 180)
+  });
+}
+function queuePresence() {
+  queuePacket({
+    kind: 'presenza slot',
+    channel: 'control',
+    payload: packControl('P', {
+      epoch: state.epoch, cycle: Math.max(0, state.cycle),
+      rank: myRank(), hash: rosterHash()
+    }),
+    priority: 3,
+    dueAt: Date.now() + randomBetween(30, 100)
+  });
+}
+function queueJoin() {
+  const now = Date.now();
+  if (now - state.lastJoinAt < 4500) return;
+  state.lastJoinAt = now;
+  queuePacket({
+    kind: 'JOIN',
+    channel: 'control',
+    payload: packControl('J', {
+      nonce: randomId(3),
+      nameHash: rosterHash([state.name || state.id])
+    }),
+    priority: 2,
+    dueAt: now + randomBetween(80, 650)
+  });
+}
+function queueJoinAccept(target) {
+  queuePacket({
+    kind: 'JOIN accept',
+    channel: 'control',
+    payload: packControl('Y', {
+      target, epoch: state.epoch,
+      rank: onlineNodes().findIndex(node => node.id === target) + 1
+    }),
+    priority: 1,
+    dueAt: Date.now() + coordinatorIndex() * 500 + randomBetween(50, 150)
+  });
+}
+function queueIdentity(target = BROADCAST, manual = false, robust = false) {
+  const now = Date.now();
+  if (!manual && now - state.lastIdentityTxAt < 1800) return;
+  state.lastIdentityTxAt = now;
+  queuePacket({
+    kind: 'identità rapida',
+    channel: 'control',
+    payload: packControl('H', {name: state.name}),
+    priority: 1,
+    dueAt: now + randomBetween(60, 160),
+    forceRobust: robust
+  });
+}
+function announceBurst() {
+  const stableOffset = 250 + Math.round(stableIdFraction() * 1250);
+  const first = stableOffset + randomBetween(80, 650);
+  const second = first + randomBetween(1900, 3600);
+  const third = second + randomBetween(2300, 4400);
+
+  frameTimeout(() => queueIdentity(BROADCAST, true, true), first);
+  frameTimeout(() => queueIdentity(BROADCAST, true, true), second);
+  frameTimeout(() => queueIdentity(BROADCAST, true, false), third);
+}
+function queueIdentityRequest(target) {
+  queuePacket({
+    kind: 'richiesta identità',
+    channel: 'control',
+    payload: packControl('R', {target}),
+    priority: 1,
+    dueAt: Date.now() + randomBetween(80, 220)
+  });
+}
+function queueRosterExchange() {
+  queuePacket({
+    kind: 'roster coordinatori',
+    channel: 'short',
+    payload: packRoster(),
+    priority: 1,
+    dueAt: Date.now() + coordinatorIndex() * 650 + randomBetween(80, 180)
+  });
+}
+function queueRequest(outgoing) {
+  const coordinator = activeCoordinator();
+  if (!coordinator) return;
+  outgoing.requestCycle = state.cycle;
+  outgoing.status = 'requesting';
+  updateMessageStatus(outgoing.token, 'queued');
+  queuePacket({
+    kind: 'richiesta lease',
+    channel: 'control',
+    payload: packControl('Q', {
+      coordinator: coordinator.id,
+      token: outgoing.token,
+      parts: outgoing.parts.length,
+      profile: outgoing.profile
+    }),
+    priority: 1,
+    dueAt: Date.now() + randomBetween(60, 160)
+  });
+}
+function queueGrant(request) {
+  const leaseSeconds = Math.min(35, Math.max(
+    request.profile === 'S' ? 12 : 17,
+    (request.profile === 'S' ? 9 : 12) + request.parts * (request.profile === 'S' ? 3 : 5)
+  ));
+  queuePacket({
+    kind: 'grant lease',
+    channel: 'control',
+    payload: packControl('G', {
+      target: request.sender,
+      token: request.token,
+      leaseSeconds,
+      cycle: Math.max(0, state.cycle)
+    }),
+    priority: 0,
+    dueAt: Date.now() + randomBetween(120, 260),
+    afterTx: () => {
+      state.activeLease = {
+        target: request.sender, token: request.token,
+        until: Date.now() + leaseSeconds * 1000
+      };
+      state.leaseUntil = state.activeLease.until;
+    }
+  });
+}
+function queueAck(target, token, part) {
+  queuePacket({
+    kind: 'ACK',
+    channel: 'control',
+    payload: packControl('A', {target, token, part}),
+    priority: 0,
+    dueAt: Date.now() + randomBetween(70, 170)
+  });
+}
+
+async function loadModem() {
+  if (state.ggwave) return;
+  setPill(els.modemPill, 'caricamento', 'warn');
+  let lastError;
+  for (const url of CDN_URLS) {
+    try {
+      await loadScript(url);
+      if (typeof window.ggwave_factory !== 'function') throw new Error('ggwave_factory assente');
+      state.ggwave = await window.ggwave_factory();
+      setPill(els.modemPill, 'mesh modem pronto', 'on');
+      log('ggwave 0.4.0 caricato.', 'ok');
+      return;
+    } catch (error) {
+      lastError = error;
+      log(`CDN non disponibile: ${url}`, 'err');
+    }
+  }
+  setPill(els.modemPill, 'errore libreria', 'bad');
+  throw lastError || new Error('Impossibile caricare ggwave');
+}
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('Caricamento fallito'));
+    document.head.appendChild(script);
+  });
+}
+function convertTypedArray(src, type) {
+  const buffer = new ArrayBuffer(src.byteLength);
+  new src.constructor(buffer).set(src);
+  return new type(buffer);
+}
+function makeParameters(payloadLength) {
+  const parameters = state.ggwave.getDefaultParameters();
+  parameters.payloadLength = payloadLength;
+  parameters.sampleRateInp = state.context.sampleRate;
+  parameters.sampleRateOut = state.context.sampleRate;
+  parameters.sampleRate = state.context.sampleRate;
+  parameters.operatingMode =
+    state.ggwave.GGWAVE_OPERATING_MODE_RX_AND_TX |
+    state.ggwave.GGWAVE_OPERATING_MODE_USE_DSS;
+  return parameters;
+}
+function updateAudioOutputStatus(text, ok = false) {
+  if (!els.audioOutputStatus) return;
+  els.audioOutputStatus.textContent = text;
+  els.audioOutputStatus.style.color = ok ? '#75e5c9' : '';
+}
+
+function ensureTxOutputGraph() {
+  if (!state.context) return null;
+  if (state.txGainNode && state.txLimiterNode) {
+    state.txGainNode.gain.value = state.txBoost;
+    return state.txGainNode;
+  }
+
+  state.txGainNode = state.context.createGain();
+  state.txGainNode.gain.value = state.txBoost;
+
+  state.txLimiterNode = state.context.createDynamicsCompressor();
+  state.txLimiterNode.threshold.value = -8;
+  state.txLimiterNode.knee.value = 6;
+  state.txLimiterNode.ratio.value = 16;
+  state.txLimiterNode.attack.value = 0.002;
+  state.txLimiterNode.release.value = 0.08;
+
+  state.txGainNode.connect(state.txLimiterNode);
+  state.txLimiterNode.connect(outputNode());
+  return state.txGainNode;
+}
+
+async function playVolumeTest() {
+  if (!state.context) {
+    showToast('Avvia prima la rete');
+    return;
+  }
+
+  await state.context.resume();
+  ensureTxOutputGraph();
+
+  const oscillator = state.context.createOscillator();
+  const gain = state.context.createGain();
+  oscillator.type = 'sine';
+  oscillator.frequency.value = 2400;
+  gain.gain.setValueAtTime(0.0001, state.context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.18, state.context.currentTime + 0.03);
+  gain.gain.setValueAtTime(0.18, state.context.currentTime + 0.35);
+  gain.gain.exponentialRampToValueAtTime(0.0001, state.context.currentTime + 0.48);
+
+  oscillator.connect(gain);
+  gain.connect(ensureTxOutputGraph());
+  oscillator.start();
+  oscillator.stop(state.context.currentTime + 0.5);
+  showToast('Tono di prova riprodotto');
+}
+
+async function configureSpeakerOutput(forcePlay = false) {
+  if (!state.context) return false;
+
+  // Su iOS il passaggio WebAudio -> MediaStream -> <audio> può introdurre
+  // buffering, interruzioni e riavvii della pipeline. Si usa quindi
+  // direttamente AudioContext.destination.
+  if (isIOSLike()) {
+    state.outputMode = 'direct';
+    if (state.txLimiterNode) {
+      try { state.txLimiterNode.disconnect(); } catch {}
+      state.txLimiterNode.connect(state.context.destination);
+    }
+    updateAudioOutputStatus('Uscita Web Audio diretta (iOS)', true);
+    log('iOS rilevato: uscita diretta AudioContext.destination.', 'ok');
+    return true;
+  }
+
+  try {
+    if (!state.outputDestination) {
+      state.outputDestination = state.context.createMediaStreamDestination();
+    }
+
+    if (!state.outputAudio) {
+      const audio = document.createElement('audio');
+      audio.autoplay = true;
+      audio.playsInline = true;
+      audio.controls = false;
+      audio.volume = 1;
+      audio.style.display = 'none';
+      audio.srcObject = state.outputDestination.stream;
+      document.body.appendChild(audio);
+      state.outputAudio = audio;
+    }
+
+    if (forcePlay || state.outputAudio.paused) {
+      await state.outputAudio.play();
+    }
+
+    state.outputMode = 'media-element';
+    updateAudioOutputStatus('Uscita multimediale attiva', true);
+    log('Uscita audio: MediaStreamDestination → elemento audio.', 'ok');
+    return true;
+  } catch (error) {
+    state.outputMode = 'direct';
+    updateAudioOutputStatus('Uscita Web Audio diretta', true);
+    log(`Fallback uscita diretta: ${error.message}`, 'err');
+    return true;
+  }
+}
+
+async function selectAudioOutput() {
+  if (isIOSLike()) {
+    showToast('Su iPhone l’uscita è gestita da iOS');
+    return;
+  }
+
+  try {
+    if (!navigator.mediaDevices?.selectAudioOutput) {
+      updateAudioOutputStatus('Selezione uscita non supportata');
+      showToast('L’uscita è gestita dal sistema');
+      return;
+    }
+
+    const device = await navigator.mediaDevices.selectAudioOutput();
+
+    if (state.outputAudio?.setSinkId) {
+      await state.outputAudio.setSinkId(device.deviceId);
+      updateAudioOutputStatus(device.label || 'Uscita selezionata', true);
+      showToast('Uscita audio selezionata');
+      log(`Uscita selezionata: ${device.label || device.deviceId}`, 'ok');
+      return;
+    }
+
+    if (state.context?.setSinkId) {
+      await state.context.setSinkId(device.deviceId);
+      updateAudioOutputStatus(device.label || 'Uscita selezionata', true);
+      showToast('Uscita audio selezionata');
+      return;
+    }
+
+    showToast('Il browser non permette di cambiare uscita');
+  } catch (error) {
+    log(`Selezione uscita: ${error.message}`, 'err');
+    showToast('Uscita audio non modificata');
+  }
+}
+
+function outputNode() {
+  if (isIOSLike() || state.outputMode !== 'media-element' || !state.outputDestination) {
+    return state.context.destination;
+  }
+  return state.outputDestination;
+}
+
+function freeModemInstances() {
+  if (!state.ggwave) return;
+  for (const key of ['control', 'short', 'long']) {
+    const instance = state.instances[key];
+    if (!instance) continue;
+    try { state.ggwave.free(instance); } catch {}
+    state.instances[key] = null;
+  }
+}
+
+function createModemInstances() {
+  freeModemInstances();
+
+  const control = state.ggwave.init(makeParameters(CONTROL_SIZE));
+  const short = state.ggwave.init(makeParameters(SHORT_SIZE));
+  const long = state.ggwave.init(makeParameters(LONG_SIZE));
+
+  if (!control || !short || !long) {
+    for (const instance of [control, short, long]) {
+      try { if (instance) state.ggwave.free(instance); } catch {}
+    }
+    throw new Error('Inizializzazione modem fixed-length fallita');
+  }
+
+  state.instances.control = control;
+  state.instances.short = short;
+  state.instances.long = long;
+}
+
+async function initAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error('Web Audio API non supportata');
+
+  if (!state.context || state.context.state === 'closed') {
+    state.context = new AudioContextClass({
+      latencyHint: 'interactive'
+    });
+  }
+
+  await state.context.resume();
+
+  // Su iOS si inizializza prima il modem e solo dopo si definisce la route.
+  // Evita che la creazione di un elemento audio modifichi la pipeline durante init.
+  createModemInstances();
+  await configureSpeakerOutput(false);
+
+  log(
+    `AudioContext ${state.context.sampleRate} Hz · stato ${state.context.state} · ` +
+    `${isIOSLike() ? 'route diretta iOS' : 'route multimediale'}`,
+    'ok'
+  );
+}
+function startRxWatchdog() {
+  clearInterval(state.rxWatchdogTimer);
+  state.rxWatchdogTimer = setInterval(() => {
+    if (!state.running) return;
+
+    const age = Date.now() - state.rxLastCallbackAt;
+    if (!state.rxLastCallbackAt || age > 2500) {
+      setPill(els.micPill, 'RX fermo', 'bad');
+      log(`RX watchdog: nessun callback audio da ${Math.round(age / 1000)}s.`, 'err');
+
+      // Safari può sospendere il contesto anche con la pagina visibile.
+      state.context?.resume().catch(() => {});
+    } else {
+      setPill(els.micPill, 'attivo', 'on');
+    }
+  }, 1800);
+}
+
+function stopRxWatchdog() {
+  clearInterval(state.rxWatchdogTimer);
+  state.rxWatchdogTimer = null;
+}
+
+async function startNetwork() {
+  if (state.running) {
+    stopNetwork();
+    return;
+  }
+
+  const name = els.nameInput.value.trim();
+  const room = els.roomInput.value.trim() || 'LOCALE';
+  if (!name) {
+    showToast('Inserisci prima il nome');
+    els.nameInput.focus();
+    return;
+  }
+
+  state.name = name.slice(0, 20);
+  state.room = room.slice(0, 12);
+  persist();
+
+  try {
+    await loadModem();
+
+    if (
+      !state.context ||
+      state.context.state === 'closed' ||
+      !state.instances.control ||
+      !state.instances.short ||
+      !state.instances.long
+    ) {
+      await initAudio();
+    } else {
+      await state.context.resume();
+      await configureSpeakerOutput(false);
+    }
+
+    try {
+      state.stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1,
+          sampleRate: state.context.sampleRate
+        }
+      });
+    } catch (constraintError) {
+      log(`Vincoli microfono non accettati: ${constraintError.message}; uso audio standard.`);
+      state.stream = await navigator.mediaDevices.getUserMedia({audio: true});
+    }
+
+    const track = state.stream.getAudioTracks()[0];
+    const settings = track?.getSettings?.() || {};
+    log(
+      `Microfono RX: ${settings.sampleRate || '?'} Hz · ` +
+      `${settings.channelCount || 1} canale · EC ${settings.echoCancellation ?? '?'}`,
+      'ok'
+    );
+
+    state.mediaSource = state.context.createMediaStreamSource(state.stream);
+    const processorSize = isIOSLike() ? 4096 : 2048;
+    state.processor = state.context.createScriptProcessor
+      ? state.context.createScriptProcessor(processorSize, 1, 1)
+      : state.context.createJavaScriptNode(processorSize, 1, 1);
+
+    state.processor.onaudioprocess = onAudio;
+    state.mediaSource.connect(state.processor);
+
+    // L'output del processor viene azzerato in onAudio().
+    // Collegamento diretto: Safari iOS non può eliminare il ramo come accade
+    // con un GainNode impostato esattamente a zero.
+    state.processor.connect(state.context.destination);
+
+    state.rxCallbackCount = 0;
+    state.rxLastCallbackAt = Date.now();
+    state.rxLastLevel = 0;
+
+    if (!isIOSLike()) {
+      await configureSpeakerOutput(true);
+    }
+
+    state.running = true;
+    state.networkStartedAt = Date.now();
+    state.joined = false;
+    state.heartbeatSequence = Math.floor(stableIdFraction() * 997);
+    state.heartbeatBackoff = 0;
+    scheduleNextDirectHeartbeat();
+    state.schedulerTimer = setInterval(processQueue, 65);
+    state.maintenanceTimer = setInterval(maintenance, 300);
+    startRxWatchdog();
+
+    setPill(els.micPill, 'attivo', 'on');
+    setPill(els.channelPill, 'attesa SYNC', 'warn');
+    els.startBtn.textContent = 'Ferma rete';
+    els.startBtn.classList.add('danger');
+    
