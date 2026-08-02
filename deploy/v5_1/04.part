@@ -1,0 +1,500 @@
+ els.announceBtn.disabled = false;
+    els.sendBtn.disabled = false;
+
+    requestWakeLock();
+    await restorePersistentQueue();
+    announceBurst();
+    log(`AudioChat avviata · coda persistente attiva per 7 giorni`, 'ok');
+    renderAll();
+  } catch (error) {
+    log(`Avvio fallito: ${error.message}`, 'err');
+
+    stopAllActiveSources('avvio fallito');
+    stopRxWatchdog();
+    if (state.stream) {
+      state.stream.getTracks().forEach(track => track.stop());
+      state.stream = null;
+    }
+    freeModemInstances();
+
+    setPill(els.micPill, 'errore', 'bad');
+    alert('Non riesco ad avviare il modem. Premi nuovamente Avvia rete: la pipeline audio è stata ripulita.');
+  }
+}
+function stopNetwork() {
+  state.running = false;
+  stopAllActiveSources('rete fermata');
+  stopRxWatchdog();
+  clearInterval(state.schedulerTimer);
+  clearInterval(state.maintenanceTimer);
+  state.schedulerTimer = state.maintenanceTimer = null;
+  clearFrameTimers();
+
+  if (state.processor) {
+    state.processor.disconnect();
+    state.processor.onaudioprocess = null;
+  }
+  if (state.mediaSource) state.mediaSource.disconnect();
+  if (state.stream) state.stream.getTracks().forEach(track => track.stop());
+
+  state.processor = state.mediaSource = state.stream = null;
+  if (state.outputAudio && !isIOSLike()) {
+    try { state.outputAudio.pause(); } catch {}
+  }
+  state.nextDirectBeaconAt = 0;
+  state.heartbeatBackoff = 0;
+  state.txQueue = [];
+  for (const pending of state.awaitingAck.values()) clearTimeout(pending.timer);
+  state.awaitingAck.clear();
+
+  if (state.wakeLock) {
+    try { state.wakeLock.release(); } catch {}
+    state.wakeLock = null;
+  }
+
+  setPill(els.micPill, 'spento');
+  setPill(els.channelPill, 'inattivo');
+  els.startBtn.textContent = 'Avvia rete';
+  els.startBtn.classList.remove('danger');
+  els.announceBtn.disabled = true;
+  els.sendBtn.disabled = true;
+  log('Mesh fermata.');
+  renderAll();
+}
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) state.wakeLock = await navigator.wakeLock.request('screen');
+  } catch {}
+}
+function onAudio(event) {
+  const input = event.inputBuffer.getChannelData(0);
+  const output = event.outputBuffer.getChannelData(0);
+  output.fill(0);
+
+  state.rxCallbackCount++;
+  state.rxLastCallbackAt = Date.now();
+
+  let sum = 0;
+  for (let index = 0; index < input.length; index++) {
+    sum += input[index] * input[index];
+  }
+  state.rxLastLevel = Math.sqrt(sum / input.length);
+
+  if (state.rxCallbackCount % 180 === 0) {
+    log(
+      `RX vivo · callback ${state.rxCallbackCount} · livello ` +
+      `${state.rxLastLevel.toFixed(4)} · ctx ${state.context.state}`
+    );
+  }
+
+  // Durante la nostra trasmissione non decodifichiamo l'eco locale,
+  // ma continuiamo a tenere viva la pipeline del microfono.
+  if (state.transmitting) return;
+
+  const raw = convertTypedArray(new Float32Array(input), Int8Array);
+  decodeFixed('control', raw, CONTROL_SIZE);
+  decodeFixed('short', raw, SHORT_SIZE);
+  decodeFixed('long', raw, LONG_SIZE);
+}
+function decodeFixed(channel, raw, size) {
+  try {
+    const result = state.ggwave.decode(state.instances[channel], raw);
+    if (!result || !result.length) return;
+    const packet = new TextDecoder('utf-8').decode(result);
+
+    if (channel === 'control') {
+      const decoded = unpackControl(packet);
+      if (decoded) {
+        state.busyUntil = Date.now() + 180;
+        handleControl(decoded);
+      }
+      return;
+    }
+
+    const shortControl = channel === 'short' ? unpackShortControl(packet) : null;
+    if (shortControl) {
+      state.busyUntil = Date.now() + 180;
+      handleShortControl(shortControl);
+      return;
+    }
+
+    const data = unpackData(packet, size);
+    if (data) {
+      state.busyUntil = Date.now() + 180;
+      handleData(data);
+    }
+  } catch (error) {
+    log(`Decoder ${channel}: ${error.message}`, 'err');
+  }
+}
+async function processQueue() {
+  if (!state.running || state.transmitting || !state.txQueue.length) return;
+
+  const now = Date.now();
+  state.txQueue.sort((a, b) => a.priority - b.priority || a.dueAt - b.dueAt);
+  const index = state.txQueue.findIndex(item => item.dueAt <= now);
+  if (index < 0 || now < state.busyUntil) return;
+
+  const item = state.txQueue.splice(index, 1)[0];
+
+  // Durante una lease possono partire soltanto i frammenti del messaggio concesso e i relativi ACK.
+  if (now < state.leaseUntil && item.kind !== 'ACK' && !item.messageId) {
+    item.dueAt = state.leaseUntil + randomBetween(80, 220);
+    queuePacket(item);
+    return;
+  }
+
+  state.transmitting = true;
+  renderIdentity();
+
+  try {
+    item.attempts++;
+    if (item.messageId) updateMessageStatus(item.messageId, 'transmitting');
+
+    const duration = await transmit(
+      item.channel, item.payload, item.attempts, item.forceRobust === true
+    );
+    log(`TX ${item.kind} · ${item.payload.length} B · ${(duration / 1000).toFixed(2)}s`);
+    state.busyUntil = Date.now() + 150;
+
+    if (typeof item.afterTx === 'function') item.afterTx();
+
+    if (item.requiresAck) {
+      const key = `${item.messageId}:${item.part}`;
+      const timer = setTimeout(
+        () => ackTimeout(key),
+        ACK_TIMEOUT + Math.min(2600, duration * 0.25)
+      );
+      state.awaitingAck.set(key, {item, timer});
+    } else if (item.messageId) {
+      markBroadcastPartSent(item.messageId, item.part);
+    }
+  } catch (error) {
+    log(`TX fallita: ${error.message}`, 'err');
+    if (item.messageId) updateMessageStatus(item.messageId, 'failed');
+  } finally {
+    state.transmitting = false;
+    renderIdentity();
+  }
+}
+function stopAllActiveSources(reason = '') {
+  for (const source of [...state.activeSources]) {
+    try { source.stop(); } catch {}
+    try { source.disconnect(); } catch {}
+    state.activeSources.delete(source);
+  }
+  if (reason) log(`Sorgenti audio arrestate: ${reason}`, 'err');
+}
+
+function transmit(channel, payload, attempt = 1, forceRobust = false) {
+  return new Promise((resolve, reject) => {
+    try {
+      const protocol = (forceRobust || attempt >= MAX_ATTEMPTS)
+        ? state.ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FAST
+        : state.ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FASTEST;
+
+      const waveform = state.ggwave.encode(
+        state.instances[channel], payload, protocol, state.volume
+      );
+      const samples = convertTypedArray(waveform, Float32Array);
+      const buffer = state.context.createBuffer(1, samples.length, state.context.sampleRate);
+      buffer.getChannelData(0).set(samples);
+
+      const source = state.context.createBufferSource();
+      source.buffer = buffer;
+      source.loop = false;
+      source.connect(ensureTxOutputGraph());
+      state.activeSources.add(source);
+
+      const duration = buffer.duration * 1000;
+      let settled = false;
+      let killTimer = null;
+
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        if (killTimer) clearTimeout(killTimer);
+        state.activeSources.delete(source);
+        try { source.disconnect(); } catch {}
+        resolve(duration);
+      };
+
+      source.onended = cleanup;
+
+      killTimer = setTimeout(() => {
+        if (settled) return;
+        log(`Watchdog TX: arresto forzato dopo ${(duration / 1000).toFixed(2)}s`, 'err');
+        try { source.stop(); } catch {}
+        cleanup();
+      }, Math.ceil(duration + 450));
+
+      source.start(state.context.currentTime + 0.035);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+function removeQueuedTransmissionItems(token) {
+  state.txQueue = state.txQueue.filter(item => item.messageId !== token);
+  for (const [key, pending] of state.awaitingAck) {
+    if (pending.item.messageId !== token) continue;
+    clearTimeout(pending.timer);
+    state.awaitingAck.delete(key);
+  }
+}
+
+function parkOutgoing(token, reason = 'destinatario non raggiungibile') {
+  const outgoing = state.outgoing.get(token);
+  if (!outgoing || outgoing.status === 'delivered') return;
+
+  removeQueuedTransmissionItems(token);
+  outgoing.status = 'waiting_offline';
+  outgoing.requestCycle = -1;
+  outgoing.lastParkedAt = Date.now();
+  outgoing.lastReason = reason;
+
+  const message = findMessage(token);
+  if (message && message.status !== 'delivered') {
+    message.status = 'waiting_offline';
+  }
+
+  queueDbPut(outgoing);
+  persist();
+  renderConversation();
+  log(`Messaggio ${token} conservato in coda: ${reason}.`);
+}
+
+function resumePendingForPeer(peerId) {
+  if (!state.running || !state.devices.has(peerId)) return;
+  if (Date.now() < state.leaseUntil || state.transmitting) return;
+
+  const pending = [...state.outgoing.values()]
+    .filter(item =>
+      item.target === peerId &&
+      item.status === 'waiting_offline' &&
+      Date.now() - item.createdAt <= QUEUE_RETENTION_MS
+    )
+    .sort((a, b) => a.createdAt - b.createdAt)[0];
+
+  if (!pending) return;
+
+  pending.status = 'waiting';
+  pending.requestCycle = -1;
+  pending.resumeCount = Number(pending.resumeCount || 0) + 1;
+  queueDbPut(pending);
+  updateMessageStatus(pending.token, 'queued');
+
+  if (directMode()) {
+    const leaseSeconds = Math.min(35, Math.max(
+      pending.profile === 'S' ? 12 : 17,
+      (pending.profile === 'S' ? 9 : 12) +
+      pending.parts.length * (pending.profile === 'S' ? 3 : 5)
+    ));
+    state.activeLease = {
+      target: state.id,
+      token: pending.token,
+      cycle: Math.max(0, state.cycle),
+      until: Date.now() + leaseSeconds * 1000
+    };
+    state.leaseUntil = state.activeLease.until;
+    showToast('Destinatario tornato: riprendo la consegna');
+    startGrantedTransmission(pending.token);
+  } else {
+    showToast('Destinatario tornato: messaggio rimesso in coda');
+  }
+}
+
+function ackTimeout(key) {
+  const pending = state.awaitingAck.get(key);
+  if (!pending) return;
+  state.awaitingAck.delete(key);
+
+  const item = pending.item;
+  if (item.attempts < MAX_ATTEMPTS) {
+    item.dueAt = Date.now() + 300 + item.attempts * 380;
+    item.priority = 1;
+    queuePacket(item);
+    updateMessageStatus(item.messageId, 'granted');
+    log(`ACK assente · ritento ${item.messageId} parte ${item.part + 1}/${item.total}`);
+  } else {
+    parkOutgoing(item.messageId, 'ACK non ricevuto dopo tre tentativi');
+  }
+}
+
+function acceptSync(sync, local = false) {
+  touchDevice(sync.sender);
+  if (!local && !termIsNewer(sync.epoch, sync.cycle, sync.sender)) return;
+
+  state.epoch = sync.epoch;
+  state.cycle = sync.cycle;
+  state.frameAnchor = Date.now();
+  state.lastSyncAt = state.frameAnchor;
+  state.nextFrameAt = state.frameAnchor + FRAME_MS;
+  state.currentSyncSender = sync.sender;
+  state.currentRosterHash = sync.hash;
+  state.syncQueuedFor = '';
+  state.joined = state.joined || sync.sender === state.id;
+
+  clearFrameTimers();
+  scheduleFrame(sync);
+
+  const localHash = rosterHash();
+  const mismatch = localHash !== sync.hash || rosterIds().length !== sync.count;
+  state.coordinatorAgreement = mismatch ? 'roster da riconciliare' : 'coordinatori allineati';
+
+  log(
+    `${local ? 'TX/locale' : 'RX'} SYNC e${sync.epoch} c${sync.cycle} da ${sync.sender}` +
+    ` · roster ${sync.count}/${sync.hash}${mismatch ? ' ≠ locale ' + rosterIds().length + '/' + localHash : ''}`,
+    mismatch ? '' : 'ok'
+  );
+  renderAll();
+}
+function scheduleFrame(sync) {
+  const coords = coordinators();
+  const backup = backupCoordinator(sync.cycle);
+
+  if (backup?.id === state.id && sync.sender !== state.id) {
+    frameTimeout(() => {
+      const status = rosterHash() === sync.hash && rosterIds().length === sync.count ? 'O' : 'M';
+      queueVote(sync, status);
+      if (status === 'M') queueRosterExchange();
+    }, 180);
+  }
+
+  // Ogni membro non coordinatore possiede uno slot stabile dopo SYNC e conferma.
+  const memberList = members();
+  const memberIndex = memberList.findIndex(node => node.id === state.id);
+  if (memberIndex >= 0) {
+    const delay = CONTROL_SLOT_MS + memberIndex * CONTROL_SLOT_MS;
+    frameTimeout(memberSlotAction, delay);
+  }
+
+  // I coordinatori con messaggi in uscita inseriscono la richiesta dopo il voto.
+  if (isCoordinator()) {
+    frameTimeout(() => {
+      const outgoing = nextOutgoingWaiting();
+      if (outgoing && outgoing.requestCycle !== state.cycle) queueRequest(outgoing);
+    }, CONTROL_SLOT_MS + coordinatorIndex() * 260);
+  }
+
+  // Un dispositivo non ancora ammesso usa la finestra JOIN dopo gli slot membri.
+  if (!state.joined) {
+    const joinDelay = CONTROL_SLOT_MS + memberList.length * CONTROL_SLOT_MS + randomBetween(250, 900);
+    frameTimeout(queueJoin, joinDelay);
+  }
+}
+function memberSlotAction() {
+  if (!state.running || Date.now() < state.leaseUntil) return;
+  const outgoing = nextOutgoingWaiting();
+  if (outgoing && outgoing.requestCycle !== state.cycle) {
+    queueRequest(outgoing);
+  } else {
+    queuePresence();
+  }
+}
+function nextOutgoingWaiting() {
+  return [...state.outgoing.values()]
+    .filter(item => !['delivered', 'failed', 'sending'].includes(item.status))
+    .sort((a, b) => a.createdAt - b.createdAt)[0] || null;
+}
+function maintenance() {
+  const now = Date.now();
+  let changed = false;
+
+  if (state.running && state.context?.state === 'suspended') {
+    state.context.resume().catch(() => {});
+  }
+
+  for (const [id, device] of state.devices) {
+    if (now - device.lastSeen > DEVICE_TIMEOUT) {
+      state.devices.delete(id);
+      changed = true;
+
+      for (const outgoing of state.outgoing.values()) {
+        if (outgoing.target === id && outgoing.status !== 'delivered') {
+          parkOutgoing(outgoing.token, 'destinatario uscito dalla pagina');
+        }
+      }
+
+      log(`Dispositivo offline: ${device.name || id}`);
+    }
+  }
+
+  for (const [key, assembly] of state.assemblies) {
+    if (now - assembly.ts > 90000) state.assemblies.delete(key);
+  }
+
+  if (state.activeLease && now >= state.activeLease.until) {
+    state.activeLease = null;
+    state.leaseUntil = 0;
+  }
+
+  if (directMode()) {
+    state.joined = true;
+    state.coordinatorAgreement = onlineNodes().length === 2
+      ? 'collegamento diretto'
+      : 'in attesa di un dispositivo';
+
+    if (now >= state.nextDirectBeaconAt && now >= state.leaseUntil) {
+      if (now < state.busyUntil || state.transmitting) {
+        state.heartbeatBackoff = Math.min(
+          12000,
+          Math.max(900, state.heartbeatBackoff * 1.7 + randomBetween(400, 1800))
+        );
+        scheduleNextDirectHeartbeat(now);
+      } else {
+        const dueJitter =
+          120 +
+          stableIdFraction() * 850 +
+          cryptoFraction() * 1500;
+
+        queuePacket({
+          kind: 'presenza diretta adattiva',
+          channel: 'control',
+          payload: packControl('P', {
+            epoch: 0,
+            cycle: state.heartbeatSequence % 1296,
+            rank: myRank(),
+            hash: rosterHash()
+          }),
+          priority: 4,
+          dueAt: now + dueJitter,
+          forceRobust: false,
+          afterTx: () => {
+            state.lastHeartbeatTxAt = Date.now();
+            state.heartbeatBackoff = Math.max(
+              0,
+              state.heartbeatBackoff * 0.35 - 300
+            );
+          }
+        });
+
+        scheduleNextDirectHeartbeat(now);
+      }
+    }
+
+    // La vecchia temporizzazione mesh viene azzerata; si riattiverà da tre nodi.
+    state.lastSyncAt = 0;
+    state.syncQueuedFor = '';
+  } else if (!state.lastSyncAt) {
+    if (now - state.networkStartedAt > 1500) {
+      if (coordinatorIndex() === 0) {
+        state.joined = true;
+        queueSync(0, 0, false);
+      } else if (now - state.lastJoinAt > 4500) {
+        queueJoin();
+      }
+    }
+  } else if (now >= state.nextFrameAt && now >= state.leaseUntil) {
+    const nextCycle = state.cycle + 1;
+    const expected = activeCoordinator(nextCycle);
+    const key = `${state.epoch}:${nextCycle}`;
+
+    if (expected?.id === state.id) {
+      queueSync(state.epoch, nextCycle, false);
+    } else if (
+      isCoordinator() &&
+      now >= state.nextFrameAt + TAKEOVER_GRACE_MS + coordinatorIndex() * 700 &&
+      state.syncQueuedFor !== key
+    ) {
+      state.coordinatorAgre
