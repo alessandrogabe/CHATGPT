@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b141a">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>AudioChat 5.1 — volume iOS potenziato</title>
+<style>
+:root{
+  --bg:#0b141a;--panel:#111b21;--panel2:#202c33;--panel3:#263841;
+  --line:#2a3942;--text:#e9edef;--muted:#8696a0;--accent:#00a884;
+  --accent2:#53bdeb;--mine:#005c4b;--danger:#ef5350;--warn:#f3b33d;
+  --shadow:0 18px 55px rgba(0,0,0,.42);--safe-bottom:env(safe-area-inset-bottom,0px)
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+body{overflow:hidden}
+button,input,textarea,select{font:inherit}
+button{touch-action:manipulation}
+.app{height:100dvh;display:grid;grid-template-columns:350px minmax(0,1fr)}
+.sidebar{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;z-index:4}
+.brand{height:66px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--line)}
+.brand-title{display:flex;align-items:center;gap:10px}
+.logo{width:38px;height:38px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(145deg,var(--accent),#087b69);font-weight:900;color:#052d26}
+.brand h1{font-size:18px;margin:0}.brand small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+.icon-btn{border:0;background:var(--panel2);color:var(--text);border-radius:10px;min-width:40px;height:40px;padding:0 10px;cursor:pointer}
+.identity{padding:13px 14px;border-bottom:1px solid var(--line);display:grid;gap:9px}
+.field-row{display:flex;gap:8px}
+.field{width:100%;border:1px solid transparent;border-radius:10px;background:var(--panel2);color:var(--text);padding:10px 11px;outline:none}
+.field:focus{border-color:var(--accent)}
+.field.small{max-width:105px}
+.btn{border:0;border-radius:10px;padding:10px 13px;background:var(--accent);color:#042c25;font-weight:800;cursor:pointer;white-space:nowrap}
+.btn.secondary{background:var(--panel2);color:var(--text)}
+.btn.danger{background:var(--danger);color:white}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.self-info{font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+.self-info code{color:#b9d8e3}
+.network-panel{padding:12px 14px;border-bottom:1px solid var(--line);display:grid;gap:9px}
+.status-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 8px;background:var(--panel2);color:var(--muted);font-size:11px;white-space:nowrap}
+.pill.on{background:#123d34;color:#75e5c9}.pill.warn{background:#493819;color:#ffd778}.pill.bad{background:#4b2020;color:#ffabab}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.main-switch{display:flex;gap:8px}
+.main-switch .btn{flex:1}
+.section-title{padding:13px 14px 7px;display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:800;color:#d5e0e5}
+.devices{overflow:auto;flex:1;padding-bottom:12px}
+.device{margin:3px 8px;padding:10px;border-radius:11px;cursor:pointer;display:flex;align-items:center;gap:10px;border:1px solid transparent}
+.device:hover,.device.active{background:var(--panel2)}.device.active{border-color:#35515c}
+.avatar{width:43px;height:43px;border-radius:50%;display:grid;place-items:center;background:#355a64;font-weight:900;flex:0 0 auto;position:relative}
+.avatar .online{position:absolute;right:0;bottom:0;width:11px;height:11px;border-radius:50%;background:var(--accent);border:2px solid var(--panel)}
+.rank{position:absolute;left:-5px;top:-5px;min-width:19px;height:19px;padding:0 4px;border-radius:9px;background:#344954;color:#fff;font-size:10px;display:grid;place-items:center;border:2px solid var(--panel)}
+.rank.leader{background:var(--warn);color:#332400}
+.device-main{min-width:0;flex:1}.device-name{font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.device-meta{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+.unread{min-width:20px;height:20px;border-radius:10px;background:var(--accent);color:#052d26;font-size:11px;font-weight:900;display:grid;place-items:center;padding:0 5px}
+.empty{padding:24px 18px;color:var(--muted);text-align:center;font-size:13px;line-height:1.45}
+.chat{display:flex;flex-direction:column;min-width:0;background:
+linear-gradient(rgba(11,20,26,.94),rgba(11,20,26,.94)),
+radial-gradient(circle at 30% 30%,#29404a 1px,transparent 1px);background-size:auto,23px 23px}
+.chat-head{height:66px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 14px;gap:11px}
+.chat-head .who{min-width:0;flex:1}.chat-head .title{font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-head .sub{font-size:11px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mobile-menu{display:none}
+.messages{flex:1;overflow:auto;padding:18px max(18px,5vw);display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth}
+.bubble{max-width:min(78%,700px);padding:8px 11px 6px;background:var(--panel2);border-radius:10px 10px 10px 3px;align-self:flex-start;box-shadow:0 1px 1px rgba(0,0,0,.25);overflow-wrap:anywhere}
+.bubble.mine{background:var(--mine);border-radius:10px 10px 3px 10px;align-self:flex-end}
+.bubble .meta{display:flex;justify-content:flex-end;align-items:center;gap:5px;margin-top:4px;color:#a9bdc5;font-size:10px}
+.status-icon.ok{color:#74d7ff}.status-icon.fail{color:#ff9d9d}.status-icon.pending{color:#d3c18e}
+.system{align-self:center;max-width:680px;background:#18242a;color:var(--muted);font-size:11px;padding:6px 10px;border-radius:8px;text-align:center;line-height:1.4}
+.compose{padding:10px 12px calc(10px + var(--safe-bottom));background:var(--panel);display:flex;align-items:flex-end;gap:8px;border-top:1px solid var(--line)}
+.compose textarea{flex:1;resize:none;min-height:45px;max-height:120px;border:0;border-radius:13px;background:var(--panel2);color:var(--text);padding:12px;outline:none}
+.send{width:47px;height:47px;border-radius:50%;border:0;background:var(--accent);color:#053229;font-size:19px;font-weight:900;cursor:pointer}
+.send:disabled{opacity:.4}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.68);z-index:20;display:none;align-items:center;justify-content:center;padding:16px}
+.overlay.open{display:flex}
+.modal{width:min(620px,100%);max-height:90dvh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:17px;box-shadow:var(--shadow)}
+.modal-head{padding:17px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.modal-head h2{font-size:17px;margin:0}
+.modal-body{padding:18px;display:grid;gap:16px}
+.setting{display:grid;gap:7px}.setting label{font-size:12px;color:#d6e0e4;font-weight:700}.setting small{color:var(--muted);line-height:1.4}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;padding:13px 18px;border-top:1px solid var(--line)}
+.hierarchy{display:grid;gap:6px}.hierarchy-item{display:flex;align-items:center;gap:9px;padding:9px;background:var(--panel2);border-radius:10px;font-size:12px}
+.hierarchy-item b{min-width:23px}.hierarchy-item .grow{flex:1;min-width:0}.hierarchy-item code{font-size:10px;color:var(--muted)}
+.log-panel{position:fixed;right:10px;bottom:76px;width:min(560px,calc(100vw - 20px));max-height:260px;display:none;overflow:auto;background:#061014;border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);padding:10px;z-index:12;font:11px ui-monospace,SFMono-Regular,Consolas,monospace;color:#b9d4df}
+.log-panel.open{display:block}.log-line{padding:3px 0;border-bottom:1px solid #102128}.log-err{color:#ff9a9a}.log-ok{color:#82e1c9}
+.toast{position:fixed;left:50%;bottom:85px;transform:translateX(-50%) translateY(20px);opacity:0;pointer-events:none;background:#edf6f3;color:#10241f;border-radius:10px;padding:10px 13px;box-shadow:var(--shadow);z-index:30;font-size:12px;font-weight:700;transition:.22s}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.guide{font-size:13px;line-height:1.55;color:#d3dde1}.guide h3{font-size:14px;margin:8px 0 4px}.guide ol{padding-left:20px;margin:5px 0}.guide li{margin:5px 0}.guide .note{padding:10px;border-radius:10px;background:#3d321b;color:#ffe1a1}
+@media(max-width:800px){
+  .app{grid-template-columns:1fr}
+  .sidebar{position:fixed;inset:0;width:100%;transform:translateX(-105%);transition:.22s;box-shadow:var(--shadow)}
+  .sidebar.open{transform:translateX(0)}
+  .mobile-menu{display:inline-grid;place-items:center}
+  .messages{padding:14px 9px}.bubble{max-width:88%}
+}
+
+.details-section{display:grid;gap:10px;padding:12px;border-radius:12px;background:var(--panel2)}
+.details-section h3{margin:0;font-size:13px}
+.details-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.details-row span{font-size:12px;color:var(--muted)}
+.details-actions{display:flex;flex-wrap:wrap;gap:8px}
+.details-actions .btn{flex:1 1 140px}
+.switch{position:relative;width:46px;height:26px;flex:0 0 auto}
+.switch input{opacity:0;width:0;height:0}
+.switch-slider{position:absolute;inset:0;border-radius:999px;background:#3a4a53;cursor:pointer;transition:.18s}
+.switch-slider::before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;border-radius:50%;background:white;transition:.18s}
+.switch input:checked + .switch-slider{background:var(--accent)}
+.switch input:checked + .switch-slider::before{transform:translateX(20px)}
+.log-panel{right:10px;left:10px;bottom:calc(78px + var(--safe-bottom));width:auto;max-width:none;max-height:min(40vh,320px)}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-title">
+        <div class="logo">AC</div>
+        <div><h1>AudioChat 5.1</h1><small>volume iOS potenziato · RX stabile</small></div>
+      </div>
+      <button class="icon-btn" id="closeSidebar" aria-label="Chiudi">×</button>
+    </div>
+
+    <div class="identity">
+      <div class="field-row">
+        <input class="field" id="nameInput" maxlength="16" placeholder="Il tuo nome">
+        <input class="field small" id="roomInput" maxlength="12" placeholder="Canale">
+        <button class="btn" id="saveIdentity">Salva</button>
+      </div>
+      <div class="self-info">
+        <span>ID <code id="selfId"></code></span>
+        <span id="selfRank">gerarchia —</span>
+      </div>
+    </div>
+
+    <div class="network-panel">
+      <div class="status-row"><span>Modem</span><span class="pill warn" id="modemPill"><span class="dot"></span>da caricare</span></div>
+      <div class="status-row"><span>Microfono</span><span class="pill" id="micPill"><span class="dot"></span>spento</span></div>
+      <div class="status-row"><span>Canale acustico</span><span class="pill" id="channelPill"><span class="dot"></span>inattivo</span></div>
+      <div class="main-switch">
+        <button class="btn" id="startBtn">Avvia rete</button>
+        <button class="btn secondary" id="announceBtn" disabled>Presentati</button>
+      </div>
+    </div>
+
+    <div class="section-title">
+      <span>Conversazioni</span>
+      <span class="pill" id="deviceCount">0 vicini</span>
+    </div>
+    <div class="devices" id="devices"></div>
+  </aside>
+
+  <main class="chat">
+    <div class="chat-head">
+      <button class="icon-btn mobile-menu" id="openSidebar">☰</button>
+      <div class="avatar" id="chatAvatar">∞</div>
+      <div class="who">
+        <div class="title" id="chatTitle">Tutti i dispositivi</div>
+        <div class="sub" id="chatSub">broadcast fixed-length · nessuna conferma di consegna</div>
+      </div>
+      <button class="icon-btn" id="hierarchyBtn" title="Gerarchia">♛</button>
+      <button class="icon-btn" id="settingsBtn" title="Impostazioni">⚙</button>
+      <button class="icon-btn" id="guideBtn" title="Guida">?</button>
+    </div>
+
+    <div class="messages" id="messages"></div>
+
+    <div class="compose">
+      <textarea id="messageInput" maxlength="900" rows="1" placeholder="Scrivi un messaggio"></textarea>
+      <button class="send" id="sendBtn" aria-label="Invia" disabled>➤</button>
+    </div>
+  </main>
+</div>
+
+<div class="overlay" id="settingsOverlay">
+  <div class="modal">
+    <div class="modal-head"><h2>Impostazioni modem</h2><button class="icon-btn modalClose">×</button></div>
+    <div class="modal-body">
+      <div class="setting">
+        <label for="volumeInput">Volume di trasmissione: <span id="volumeValue">10</span></label>
+        <input id="volumeInput" type="range" min="3" max="20" value="10">
+        <small>Il valore controlla l’ampiezza generata da ggwave. Regola anche il volume fisico dell’iPhone.</small>
+      </div>
+      <div class="setting">
+        <label for="helloInput">Intervallo di presenza</label>
+        <select class="field" id="helloInput">
+          <option value="15000">15 secondi</option>
+          <option value="24000" selected>24 secondi</option>
+          <option value="36000">36 secondi</option>
+        </select>
+        <small>Con due telefoni viene usato un collegamento diretto. Da tre a cinque telefoni vengono eletti due coordinatori.</small>
+      </div>
+      <div class="setting">
+        <label>Profilo velocità</label>
+        <div class="pill on">diretta 1–2 telefoni · mesh 3–5</div>
+        <small>Con uno o due telefoni non servono JOIN o GRANT: identità, messaggio e ACK sono diretti. Da tre telefoni si attiva la mesh coordinata.</small>
+      </div>
+      <div class="setting">
+        <label>Archivio locale</label>
+        <button class="btn danger" id="clearDataBtn">Cancella messaggi e identità</button>
+      </div>
+      <div class="details-section">
+        <h3>Uscita audio</h3>
+        <div class="details-row">
+          <span id="audioOutputStatus">Uscita predefinita del telefono</span>
+        </div>
+        <div class="setting">
+          <label for="txBoostInput">Amplificazione TX: <span id="txBoostValue">1.8×</span></label>
+          <input id="txBoostInput" type="range" min="1" max="2.8" step="0.1" value="1.8">
+          <small>Il limiter evita la saturazione. Su iPhone lascia il volume multimediale alto.</small>
+        </div>
+        <div class="details-actions">
+          <button class="btn secondary" id="activateSpeakerBtn">Riattiva audio</button>
+          <button class="btn secondary" id="testToneBtn">Prova volume</button>
+          <button class="btn secondary" id="selectOutputBtn">Scegli uscita</button>
+        </div>
+        <small>Safari iOS non consente a una pagina Web di scegliere direttamente tra auricolare e vivavoce; AudioChat usa l'uscita multimediale Web Audio.</small>
+      </div>
+
+      <div class="details-section">
+        <h3>Diagnostica</h3>
+        <div class="details-row">
+          <span>Mostra pannello log</span>
+          <label class="switch">
+            <input type="checkbox" id="showLogToggle">
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+        <div class="details-actions">
+          <button class="btn secondary" id="copyLogBtn">Copia log</button>
+          <button class="btn secondary" id="clearLogBtn">Svuota log</button>
+        </div>
+        <small>Il log resta nascosto durante l'uso normale.</small>
+      </div>
+    </div>
+    <div class="modal-actions"><button class="btn modalClose">Chiudi</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="hierarchyOverlay">
+  <div class="modal">
+    <div class="modal-head"><h2>Gerarchia della rete</h2><button class="icon-btn modalClose">×</button></div>
+    <div class="modal-body">
+      <div class=
