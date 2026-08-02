@@ -19,7 +19,7 @@ html,body{margin:0;height:100%;background:#071116;color:#edf7f8;font-family:syst
   const status=document.getElementById('status');
   try{
     if(typeof DecompressionStream!=='function') throw new Error('Il browser non supporta la decompressione richiesta');
-    const paths=Array.from({length:5},(_,i)=>`deploy/v6_1_1_secure/${String(i).padStart(2,'0')}.b64part?v=611`);
+    const paths=Array.from({length:10},(_,i)=>`deploy/v6_1_1_exact/${String(i).padStart(2,'0')}.part?v=6111`);
     const parts=await Promise.all(paths.map(async path=>{
       const response=await fetch(path,{cache:'no-store'});
       if(!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
