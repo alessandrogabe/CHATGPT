@@ -1,0 +1,127 @@
+"><small>Sicurezza</small><strong id="mSecurity">0</strong><em>frame rifiutati</em></div></div>
+  <div class="topology" id="topology" aria-label="Topologia della rete"></div>
+  <div class="node-stats" id="nodeStats"></div>
+</div></div></div>
+
+<div class="overlay" id="docsOverlay"><div class="modal wide"><div class="modal-head"><h2>Protocollo AudioMesh 6.4</h2><button class="icon-btn closeModal">×</button></div><div class="modal-body docs">
+  <div class="license"><b>Licenza MIT.</b> Puoi usare, modificare, distribuire e integrare il protocollo in prodotti commerciali mantenendo l’avviso di copyright.</div>
+  <h3>Stack</h3><div class="spec-grid"><div class="spec-cell">APP<br><b>Chat / sensori</b></div><div class="spec-cell">MESH<br><b>Roster / relay</b></div><div class="spec-cell">MAC<br><b>TDMA + CSMA/CA</b></div><div class="spec-cell">MODEM<br><b>ggwave 64 B</b></div></div>
+  <h3>Frame acustico uniforme</h3><p>Ogni trasmissione è una stringa Base64URL di 64 caratteri, equivalente a 48 byte. Non esistono frame visibilmente più corti per ACK o presenza.</p>
+  <div class="codebox">12 byte nonce pubblico
+36 byte AES-GCM ciphertext + tag
+  └─ 20 byte plaintext autenticato
+     version  1 B
+     type     1 B   (cifrato)
+     epoch    1 B
+     src/dst  1 B   (4 bit + 4 bit)
+     seq      2 B
+     fragment 1 B
+     total    1 B
+     payload 12 B</div>
+  <h3>Derivazione e rotazione</h3><div class="codebox">master = PBKDF2-SHA-256(password, SHA-256("AudioMesh6|" + network), 150000)
+session(epoch) = HKDF-SHA-256(master, networkSalt, "AudioMesh6 epoch " + epoch)
+epoch = UTC hour modulo 256
+cipher = AES-GCM-256(sessionKey, nonce, plaintext, AAD)</div>
+  <h3>Accesso al mezzo</h3><p>Un rilevatore spettrale marca il canale come occupato prima della decodifica completa. Ogni TX viene congelata. Al rilascio si applicano guard time e backoff casuale. Con roster stabile, i nodi usano slot comuni; una trasmissione lunga invia RESERVE e sospende i turni successivi fino a RELEASE o timeout.</p>
+  <h3>Implementazione minima</h3><div class="codebox">1. Implementa il modem fixed-length 64 ASCII
+2. Deriva master e session key con WebCrypto / mbedTLS
+3. Decifra e autentica prima di leggere il type
+4. Mantieni replay cache dei nonce
+5. Partecipa a HELLO, PRESENCE_ACK, SYNC e ROSTER
+6. Trasmetti solo nel tuo slot e solo con carrier libero
+7. Conferma DATA con ACK per frammento</div>
+  <h3>Fingerprint</h3><p>Il fingerprint mostrato nell’app è derivato dalla chiave master. Due nodi con nome rete o password differenti avranno fingerprint diversi e ignoreranno reciprocamente i frame.</p>
+</div></div></div>
+
+<div class="overlay" id="settingsOverlay"><div class="modal"><div class="modal-head"><h2>Impostazioni</h2><button class="icon-btn closeModal">×</button></div><div class="modal-body">
+  <div class="settings-grid">
+    <div class="setting"><h3>Trasmissione</h3><label>Volume modem <span id="volumeValue">10</span><input type="range" id="volumeInput" min="5" max="30" value="10"></label><label>Boost TX <span id="boostValue">1.6×</span><input type="range" id="boostInput" min="1" max="2.6" step="0.1" value="1.6"></label><button class="btn secondary" id="testToneBtn">Prova altoparlante</button></div>
+    <div class="setting"><h3>Ricezione</h3><label>AGC massimo <span id="agcValue">16×</span><input type="range" id="agcInput" min="1" max="32" value="16"></label><small id="rxReadout">Ingresso non misurato</small></div>
+    <div class="setting"><h3>Diagnostica</h3><label class="check"><input type="checkbox" id="showLog"> Mostra log tecnico</label><div class="row wrap gap8"><button class="btn secondary" id="copyLogBtn">Copia log</button><button class="btn secondary" id="clearLogBtn">Svuota</button></div></div>
+    <div class="setting"><h3>Dati locali</h3><button class="btn danger" id="clearDataBtn">Cancella identità, chiave e messaggi</button><small>La password non viene inviata. Se scegli di ricordarla, la chiave derivata viene conservata localmente sul dispositivo.</small></div>
+  </div>
+</div></div></div>
+
+<div class="log-panel" id="logPanel"></div><div class="toast" id="toast"></div>
+
+<script>
+(() => {
+'use strict';
+const VERSION='6.4.0-hardened-chirp-mac';
+const MAX_NODES=10, BROADCAST=15, UNASSIGNED=14;
+const FRAME_CHARS=64, RAW_BYTES=48, NONCE_BYTES=12, PLAIN_BYTES=20;
+const DEVICE_TIMEOUT=55000, PRESENCE_MIN=24000, PRESENCE_MAX=38000;
+const GUARD_MS=900, ACK_TIMEOUT=13000, MAX_RETRY=3;
+const DISCOVERY_ROUND_MS=30000, DISCOVERY_SLOT_MS=2600, LISTEN_AFTER_HELLO_MS=10000;
+const LISTEN_AFTER_CONTROL_MS=2200, CLAIM_WAIT_MS=5200, MAX_FRAMES_PER_LEASE=2;
+const JOIN_PROVISIONAL_MS=3000, JOIN_SESSION_MS=15000, JOIN_ABSOLUTE_MS=20000;
+const ELECTION_LISTEN_MS=3000, ELECTION_WINDOW_MS=5000;
+const CHIRP_RATE=8000, CHIRP_SEGMENT_MS=145, CHIRP_GAP_MS=55, CHIRP_TOTAL_MS=545;
+const CHIRP_THRESHOLD_HIGH=.56, CHIRP_THRESHOLD_LOW=.42, CHIRP_MARGIN=.055;
+const TYPES={HELLO:1,PRESENCE:2,PRESENCE_ACK:3,RESERVE:4,DATA:5,DATA_ACK:6,ROSTER:7,RELEASE:8,SYNC:9,CLAIM:10,CLAIM_ACK:11,JOIN_OPEN:12,JOIN_LOCK:13,PROFILE_TEST:14,PROFILE_ACK:15,ASSIGN:16,READY:17,RESUME:18};
+const TYPE_NAMES=Object.fromEntries(Object.entries(TYPES).map(([k,v])=>[v,k]));
+const te=new TextEncoder(), td=new TextDecoder();
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const els={
+ onboarding:$('#onboarding'),joinName:$('#joinName'),joinNetwork:$('#joinNetwork'),joinPassword:$('#joinPassword'),rememberKey:$('#rememberKey'),joinBtn:$('#joinBtn'),resumeBtn:$('#resumeBtn'),showDocsWelcome:$('#showDocsWelcome'),
+ sidebar:$('#sidebar'),openSidebar:$('#openSidebar'),closeSidebar:$('#closeSidebar'),selfName:$('#selfName'),selfAddress:$('#selfAddress'),fingerprint:$('#fingerprint'),modemBadge:$('#modemBadge'),micBadge:$('#micBadge'),carrierBadge:$('#carrierBadge'),slotBadge:$('#slotBadge'),startBtn:$('#startBtn'),announceBtn:$('#announceBtn'),deviceCount:$('#deviceCount'),devices:$('#devices'),
+ chatAvatar:$('#chatAvatar'),chatTitle:$('#chatTitle'),chatSub:$('#chatSub'),messages:$('#messages'),messageInput:$('#messageInput'),sendBtn:$('#sendBtn'),dashboardBtn:$('#dashboardBtn'),docsBtn:$('#docsBtn'),settingsBtn:$('#settingsBtn'),
+ dashboardOverlay:$('#dashboardOverlay'),docsOverlay:$('#docsOverlay'),settingsOverlay:$('#settingsOverlay'),topology:$('#topology'),nodeStats:$('#nodeStats'),mNodes:$('#mNodes'),mDelivery:$('#mDelivery'),mBusy:$('#mBusy'),mSecurity:$('#mSecurity'),
+ volumeInput:$('#volumeInput'),volumeValue:$('#volumeValue'),boostInput:$('#boostInput'),boostValue:$('#boostValue'),agcInput:$('#agcInput'),agcValue:$('#agcValue'),rxReadout:$('#rxReadout'),testToneBtn:$('#testToneBtn'),showLog:$('#showLog'),copyLogBtn:$('#copyLogBtn'),clearLogBtn:$('#clearLogBtn'),clearDataBtn:$('#clearDataBtn'),logPanel:$('#logPanel'),toast:$('#toast')
+};
+const saved=JSON.parse(localStorage.getItem('audiomesh6.profile')||'{}');
+const state={
+ name:saved.name||'',network:saved.network||'LOCALE',nodeId:saved.nodeId||randomHex(6),masterBytes:null,aesKeys:new Map(),networkSalt:null,aad:null,fingerprint:'',remember:false,
+ context:null,stream:null,source:null,processor:null,analyser:null,analyserData:null,ggwave:null,modem:null,running:false,transmitting:false,activeSources:new Set(),txGain:null,limiter:null,
+ volume:Number(saved.volume||10),boost:Number(saved.boost||1.6),agcMax:Number(saved.agcMax||16),rxGain:1,noiseFloor:.0002,rxLevel:0,rxPeak:0,
+ bootNonce:crypto.getRandomValues(new Uint8Array(3)),counter:0n,seq:Math.floor(Math.random()*65535),seenNonces:new Map(),authFailures:0,replayDrops:0,
+ devices:new Map(),nameParts:new Map(),selected:15,histories:saved.histories||{},unread:saved.unread||{},queue:[],awaiting:new Map(),outgoing:new Map(),assemblies:new Map(),
+ txCount:0,rxCount:0,ackedCount:0,failedCount:0,carrierUntil:0,carrierActive:false,carrierSamples:[],lastCarrierScan:0,lastValidRx:0,
+ nextPresenceAt:0,nextSyncAt:0,slotAnchor:Date.now(),slotDuration:5200,rosterVersion:0,lease:null,lastTxDuration:4200,
+ listenUntil:0,discoveryRoundStarted:0,nextDiscoveryRoundAt:0,helloSentRound:-1,helloScheduledRound:-1,
+ collisionTotal:0,claimRetries:new Map(),claimTimers:new Map(),pendingClaims:new Map(),
+ networkPhase:'IDLE',quietUntil:0,joinSessionUntil:0,joinAbsoluteUntil:0,joinCandidateId:null,
+ electionAt:0,electionAttempt:0,toneCooldownUntil:0,
+ chirpTemplates:null,chirpBuffer:new Float32Array(CHIRP_RATE*2),chirpWrite:0,chirpFilled:0,
+ chirpLastScan:0,chirpCandidate:null,chirpCandidateAt:0,chirpScores:{MASTER:0,JOIN:0,RESUME:0},
+ timers:[],db:null,logLines:[]
+};
+
+function randomHex(bytes){return [...crypto.getRandomValues(new Uint8Array(bytes))].map(x=>x.toString(16).padStart(2,'0')).join('').toUpperCase()}
+function bytesToHex(a){return [...a].map(x=>x.toString(16).padStart(2,'0')).join('').toUpperCase()}
+function hexToBytes(s){const a=new Uint8Array(s.length/2);for(let i=0;i<a.length;i++)a[i]=parseInt(s.slice(i*2,i*2+2),16);return a}
+function concatBytes(...arrays){const n=arrays.reduce((s,a)=>s+a.length,0),out=new Uint8Array(n);let o=0;for(const a of arrays){out.set(a,o);o+=a.length}return out}
+function b64url(bytes){let s='';for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
+function fromB64url(s){s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';const raw=atob(s),out=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out}
+function normalizeNetwork(s){return String(s||'').trim().normalize('NFKC').toUpperCase()}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms))}
+function jitter(a,b){return a+Math.random()*(b-a)}
+function initials(s){return String(s||'?').split(/\s+/).map(x=>x[0]||'').join('').slice(0,2).toUpperCase()}
+function escapeHtml(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+function toast(s){els.toast.textContent=s;els.toast.classList.add('show');setTimeout(()=>els.toast.classList.remove('show'),2200)}
+function setBadge(el,text,kind=''){el.className='badge '+kind;el.innerHTML=`<span class="dot"></span>${escapeHtml(text)}`}
+function log(text,kind=''){const line=`[${new Date().toLocaleTimeString()}] ${text}`;state.logLines.push(line);if(state.logLines.length>400)state.logLines.shift();const d=document.createElement('div');d.className='log-line '+(kind==='ok'?'log-ok':kind==='err'?'log-err':'');d.textContent=line;els.logPanel.prepend(d);while(els.logPanel.children.length>300)els.logPanel.lastChild.remove()}
+function persist(){localStorage.setItem('audiomesh6.profile',JSON.stringify({name:state.name,network:state.network,nodeId:state.nodeId,volume:state.volume,boost:state.boost,agcMax:state.agcMax,histories:state.histories,unread:state.unread}))}
+function currentEpoch(){return Math.floor(Date.now()/3600000)%256}
+
+async function sha256(data){return new Uint8Array(await crypto.subtle.digest('SHA-256',data))}
+async function deriveNetwork(name,password,masterOverride=null){
+ const normalized=normalizeNetwork(name);state.network=normalized;
+ state.networkSalt=await sha256(te.encode('AudioMesh6|'+normalized));
+ state.aad=(await sha256(te.encode('AudioMesh6-AAD|'+normalized))).slice(0,12);
+ if(masterOverride){state.masterBytes=masterOverride}else{
+  const material=await crypto.subtle.importKey('raw',te.encode(password),'PBKDF2',false,['deriveBits']);
+  state.masterBytes=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:state.networkSalt,iterations:150000},material,256));
+ }
+ const fp=(await sha256(concatBytes(te.encode('AudioMesh6 fingerprint'),state.masterBytes))).slice(0,8);
+ state.fingerprint=[...fp].map(x=>x.toString(16).padStart(2,'0')).join(':').toUpperCase();state.aesKeys.clear();
+}
+async function epochKey(epoch){if(state.aesKeys.has(epoch))return state.aesKeys.get(epoch);const base=await crypto.subtle.importKey('raw',state.masterBytes,'HKDF',false,['deriveKey']);const key=await crypto.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt:state.networkSalt,info:te.encode('AudioMesh6 epoch '+epoch)},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);state.aesKeys.set(epoch,key);if(state.aesKeys.size>4)state.aesKeys.delete(state.aesKeys.keys().next().value);return key}
+function makeNonce(epoch){const n=new Uint8Array(12);n[0]=epoch;n.set(state.bootNonce,1);let x=state.counter++;for(let i=11;i>=4;i--){n[i]=Number(x&255n);x>>=8n}return n}
+async function encryptFrame(type,src,dst,seq,frag,total,payload){
+ const epoch=currentEpoch(),plain=new Uint8Array(20);plain[0]=6;plain[1]=type;plain[2]=epoch;plain[3]=((src&15)<<4)|(dst&15);plain[4]=(seq>>8)&255;plain[5]=seq&255;plain[6]=frag&255;plain[7]=total&255;plain.set(payload.slice(0,12),8);
+ const nonce=makeNonce(epoch),key=await epochKey(epoch);const cipher=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:nonce,additionalData:state.aad,tagLength:128},key,plain));const frame=concatBytes(nonce,cipher);const out=b64url(frame);if(out.length!==64)throw new Error('Frame cifrato non lungo 64 caratteri');return out
+}
+async function decryptFrame(text){
+ if(!/^[A-Za-z0-9_-]{64}
