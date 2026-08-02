@@ -7,30 +7,28 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>AudioMesh 6.3 — caricamento</title>
+<title>AudioMesh 6.4 — caricamento</title>
 <style>
 html,body{margin:0;height:100%;background:#071116;color:#edf7f8;font-family:system-ui,-apple-system,sans-serif}body{display:grid;place-items:center}.box{text-align:center;padding:24px}.spin{width:38px;height:38px;margin:0 auto 16px;border:4px solid #20343e;border-top-color:#20d7a5;border-radius:50%;animation:r .8s linear infinite}@keyframes r{to{transform:rotate(360deg)}}small{color:#91a8b1;display:block;margin-top:7px}
 </style>
 </head>
 <body>
-<div class="box"><div class="spin"></div><b>AudioMesh 6.3</b><small id="status">Caricamento ingresso serializzato…</small></div>
+<div class="box"><div class="spin"></div><b>AudioMesh 6.4</b><small id="status">Caricamento livello chirp robusto…</small></div>
 <script>
 (async()=>{
   const status=document.getElementById('status');
   try{
-    if(typeof DecompressionStream!=='function') throw new Error('Il browser non supporta la decompressione richiesta');
-    const paths=Array.from({length:5},(_,i)=>`deploy/v6_3_serialized/${String(i).padStart(2,'0')}.b64part?v=630`);
-    const parts=await Promise.all(paths.map(async path=>{
+    const paths=Array.from({length:7},(_,i)=>`deploy/v6_4_chirp_readable/${String(i).padStart(2,'0')}.part?v=640`);
+    const parts=[];
+    for(const path of paths){
       const response=await fetch(path,{cache:'no-store'});
       if(!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
-      return (await response.text()).trim();
-    }));
-    const binary=atob(parts.join(''));
-    const bytes=new Uint8Array(binary.length);
-    for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
-    const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-    const app=await new Response(stream).text();
-    if(!app.includes("const VERSION='6.3.0-serialized-join-tones'")) throw new Error('Pacchetto incompleto o versione errata');
+      parts.push(await response.text());
+    }
+    const app=parts.join('');
+    if(!app.startsWith('<!doctype html>')) throw new Error('Inizio applicazione non valido');
+    if(!app.includes("const VERSION='6.4.0-hardened-chirp-mac'")) throw new Error('Versione incompleta o errata');
+    if(!app.trimEnd().endsWith('</html>')) throw new Error('Applicazione troncata');
     document.open();document.write(app);document.close();
   }catch(error){status.textContent='Errore di caricamento: '+error.message;console.error(error)}
 })();
