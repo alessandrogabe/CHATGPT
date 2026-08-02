@@ -1,0 +1,150 @@
+ueAt:Date.now()+jitter(450,1200),meta:{onSent:()=>{
+  state.lease={owner:ownAddress(),until:Date.now()+seconds*1000,id:rec.id};rec.status='sending';
+  const m=messageById(rec.id);if(m)m.status='sending';
+  batch.forEach((entry,j)=>{
+   const payload=new Uint8Array(12);payload.set(entry.p);
+   enqueue(frameItem({kind:`DATA ${entry.i+1}/${allParts.length}`,type:TYPES.DATA,dst:rec.targetAddr,payload,frag:entry.i,total:allParts.length,priority:1,dueAt:Date.now()+GUARD_MS+j*(state.lastTxDuration+1100),robust:j===0,lease:true,meta:{seq:Number.parseInt(rec.id,16),messageId:rec.id}}))
+  });
+  setTimeout(()=>{
+   if(rec.targetAddr===BROADCAST){
+    batch.forEach(x=>{if(!rec.acked.includes(x.i))rec.acked.push(x.i)});
+    state.lease=null;
+    if(rec.acked.length>=allParts.length){rec.status='sent';state.outgoing.delete(rec.id);dbDelete(rec.id);const mm=messageById(rec.id);if(mm)mm.status='sent'}
+    else{rec.status='queued';dbPut(rec);setTimeout(()=>scheduleClaim(rec),jitter(1500,3500))}
+    renderConversation()
+   }else scheduleAckTimeout(rec.id)
+  },seconds*1000+500)
+ }}}))
+}
+function sendMessage(){const text=els.messageInput.value.trim();if(!text)return;const target=selectedNode(),targetId=target?.id||'broadcast',targetAddr=target?addressOf(target.id):BROADCAST,id=randomHex(2),bytes=te.encode(text),parts=[];for(let i=0;i<bytes.length;i+=12)parts.push(bytes.slice(i,i+12));if(!parts.length)parts.push(new Uint8Array());const rec={id,targetId,targetAddr,text,parts:parts.map(b=>b64url(b)),acked:[],createdAt:Date.now(),status:target&&!state.devices.has(target.id)?'queued':'queued',networkFingerprint:state.fingerprint};state.outgoing.set(id,rec);dbPut(rec);addMessage(targetId,{id,from:state.nodeId,to:targetId,text,time:Date.now(),mine:true,status:'queued'});els.messageInput.value='';beginDelivery(rec)}
+function beginDelivery(rec){if(!state.running)return;if(['claiming','reserving','sending'].includes(rec.status))return;if(rec.targetAddr!==BROADCAST&&!roster().some(n=>n.id===rec.targetId))return;scheduleClaim(rec)}
+function scheduleAckTimeout(id){const rec=state.outgoing.get(id);if(!rec||rec.status==='delivered'||rec.status==='sent')return;rec.retries=(rec.retries||0)+1;if(rec.retries>MAX_RETRY){rec.status='queued';const m=messageById(id);if(m)m.status='queued';dbPut(rec);state.failedCount++;log(`Messaggio ${id} conservato: destinatario non confermato`,'err');renderConversation();return}rec.status='queued';beginDelivery(rec)}
+
+async function handleDecoded(text){const packet=await decryptFrame(text);if(!packet)return;if(packet.dst!==BROADCAST&&packet.dst!==ownAddress()&&packet.type!==TYPES.HELLO)return;state.rxCount++;state.lastValidRx=Date.now();state.carrierUntil=Math.max(state.carrierUntil,Date.now()+GUARD_MS);const quality=clamp(Math.round(state.rxPeak*120),1,100);await handlePacket(packet,quality);renderAll()}
+async function handlePacket(p,quality){const type=TYPE_NAMES[p.type]||'UNKNOWN';log(`RX ${type} · ${p.src}→${p.dst} · q${quality}`,'ok');
+ if(p.type===TYPES.HELLO){const id=bytesToHex(p.payload.slice(0,6));if(id===state.nodeId)return;state.listenUntil=Math.max(state.listenUntil,Date.now()+GUARD_MS+350);const key=id,part=td.decode(p.payload.slice(6)).replace(/\0/g,'');let a=state.nameParts.get(key)||{parts:[],total:p.total};a.parts[p.frag]=part;a.total=p.total;state.nameParts.set(key,a);if(a.parts.filter(x=>x!==undefined).length>=a.total){const name=a.parts.join('').trim()||id.slice(0,6);const first=!state.devices.has(id);state.devices.set(id,{id,name,lastSeen:Date.now(),quality,confirmed:false,tx:0,rx:1});if(first){state.rosterVersion++;toast(`${name} rilevato`);schedulePresenceAck(addressOf(id),id,p.seq,quality);
+ if(isCoordinator()&&state.joinSessionUntil>Date.now()&&!state.joinCandidateId){
+  state.joinCandidateId=id;
+  const lock=new Uint8Array(12);lock.set(hexToBytes(id),0);lock[6]=addressOf(id);
+  enqueue(frameItem({kind:'JOIN_LOCK',type:TYPES.JOIN_LOCK,payload:lock,priority:0,urgent:true,robust:true,dueAt:Date.now()+450}));
+  setTimeout(()=>scheduleProfileTest(addressOf(id),id),1500)
+ }else if(isCoordinator())setTimeout(scheduleRoster,LISTEN_AFTER_CONTROL_MS+900)}}return}
+ if(p.type===TYPES.PRESENCE){const id=bytesToHex(p.payload.slice(0,6));if(id===state.nodeId)return;let d=state.devices.get(id)||{id,name:id.slice(0,6),tx:0,rx:0};Object.assign(d,{lastSeen:Date.now(),quality,rx:(d.rx||0)+1});state.devices.set(id,d);schedulePresenceAck(addressOf(id),id,p.seq,quality);return}
+ if(p.type===TYPES.PRESENCE_ACK){const targetId=bytesToHex(p.payload.slice(0,6));if(targetId!==state.nodeId)return;const sender=roster().find(n=>addressOf(n.id)===p.src);if(sender&&sender.id!==state.nodeId){const d=state.devices.get(sender.id);if(d){d.confirmed=true;d.quality=Math.round((d.quality+quality)/2);d.lastSeen=Date.now()}}return}
+ if(p.type===TYPES.SYNC){const coordId=bytesToHex(p.payload.slice(0,6));if(coordinator().id!==coordId)return;state.slotDuration=clamp(p.payload[10]*500,3500,12000);state.rosterVersion=p.payload[11];state.slotAnchor=Date.now()+GUARD_MS;return}
+ if(p.type===TYPES.ROSTER){const id=bytesToHex(p.payload.slice(0,6));if(id===state.nodeId)return;let d=state.devices.get(id)||{id,name:id.slice(0,6),tx:0,rx:0};d.lastSeen=Date.now();d.confirmed=true;state.devices.set(id,d);return}
+ if(p.type===TYPES.CLAIM){scheduleClaimAck(p);state.pendingClaims.set(bytesToHex(p.payload.slice(0,2)),{src:p.src,at:Date.now(),frames:p.payload[3]});return}
+ if(p.type===TYPES.CLAIM_ACK){const id=bytesToHex(p.payload.slice(0,2)),rec=state.outgoing.get(id);if(!rec||rec.status!=='claiming')return;clearTimeout(state.claimTimers.get(id));state.claimTimers.delete(id);state.claimRetries.delete(id);log(`CLAIM ${id} confermato da #${p.src}`,'ok');startReservedDelivery(rec);return}
+ if(p.type===TYPES.JOIN_OPEN){
+  state.joinSessionUntil=Date.now()+Math.max(8000,p.payload[6]*1000);
+  state.joinAbsoluteUntil=Date.now()+Math.max(12000,p.payload[7]*1000);
+  extendQuiet(state.joinAbsoluteUntil-Date.now(),'JOIN_TEST');
+  const coordId=bytesToHex(p.payload.slice(0,6));
+  log(`JOIN_OPEN ricevuto dal coordinatore ${coordId.slice(0,6)}`,'ok');
+  if(state.networkPhase==='JOIN_REQUEST'||state.devices.size===0){
+    state.helloScheduledRound=-1;state.helloSentRound=-1;
+    setTimeout(()=>scheduleHello('candidato autorizzato'),650+jitter(0,650));
+  }
+  return
+ }
+ if(p.type===TYPES.JOIN_LOCK){
+  const candidateId=bytesToHex(p.payload.slice(0,6));
+  state.joinCandidateId=candidateId;
+  extendQuiet(JOIN_ABSOLUTE_MS,'JOIN_LOCKED');
+  if(candidateId!==state.nodeId)log(`JOIN bloccato sul candidato ${candidateId.slice(0,6)}`);
+  return
+ }
+ if(p.type===TYPES.PROFILE_TEST){
+  const targetId=bytesToHex(p.payload.slice(0,6));
+  if(targetId!==state.nodeId)return;
+  extendQuiet(10000,'JOIN_TEST');
+  const ack=new Uint8Array(12);ack.set(hexToBytes(state.nodeId),0);ack[6]=1;ack[7]=95;
+  enqueue(frameItem({kind:'PROFILE_ACK',type:TYPES.PROFILE_ACK,dst:p.src,payload:ack,priority:0,urgent:true,robust:true,dueAt:Date.now()+650}));
+  return
+ }
+ if(p.type===TYPES.PROFILE_ACK){
+  if(!isCoordinator())return;
+  const candidateId=bytesToHex(p.payload.slice(0,6));
+  if(candidateId!==state.joinCandidateId)return;
+  const assign=new Uint8Array(12);assign.set(hexToBytes(candidateId),0);assign[6]=addressOf(candidateId);assign[7]=p.payload[6];assign[8]=state.rosterVersion&255;
+  enqueue(frameItem({kind:'ASSIGN',type:TYPES.ASSIGN,dst:p.src,payload:assign,priority:0,urgent:true,robust:true,dueAt:Date.now()+500}));
+  return
+ }
+ if(p.type===TYPES.ASSIGN){
+  const targetId=bytesToHex(p.payload.slice(0,6));
+  if(targetId!==state.nodeId)return;
+  const ready=new Uint8Array(12);ready.set(hexToBytes(state.nodeId),0);ready[6]=p.payload[6];ready[7]=p.payload[7];
+  enqueue(frameItem({kind:'READY',type:TYPES.READY,dst:p.src,payload:ready,priority:0,urgent:true,robust:true,dueAt:Date.now()+500}));
+  return
+ }
+ if(p.type===TYPES.READY){
+  if(!isCoordinator())return;
+  const candidateId=bytesToHex(p.payload.slice(0,6));
+  if(candidateId===state.joinCandidateId)finishJoinSession();
+  return
+ }
+ if(p.type===TYPES.RESUME){
+  state.quietUntil=0;state.joinSessionUntil=0;state.joinAbsoluteUntil=0;state.joinCandidateId=null;
+  setPhase('ACTIVE','RESUME autenticato');
+  return
+ }
+ if(p.type===TYPES.RESERVE){const id=bytesToHex(p.payload.slice(0,2)),frames=p.payload[4],seconds=p.payload[6];state.lease={owner:p.src,until:Date.now()+seconds*1000,id,frames};return}
+ if(p.type===TYPES.RELEASE){const id=bytesToHex(p.payload.slice(0,2));if(state.lease?.id===id)state.lease=null;return}
+ if(p.type===TYPES.DATA){const messageId=p.seq.toString(16).padStart(4,'0').toUpperCase();const key=`${p.src}:${p.seq}`;let a=state.assemblies.get(key)||{parts:new Array(p.total),total:p.total,from:p.src,at:Date.now()};a.parts[p.frag]=p.payload.slice();a.at=Date.now();state.assemblies.set(key,a);scheduleDataAck(p,p.frag,quality);if(a.parts.filter(Boolean).length===a.total){const all=concatBytes(...a.parts),text=td.decode(all).replace(/\0+$/,'');const sender=roster().find(n=>addressOf(n.id)===p.src);const senderId=sender?.id||`addr-${p.src}`;addMessage(senderId,{id:key,from:senderId,to:state.nodeId,text,time:Date.now(),mine:false,status:'received'});state.assemblies.delete(key);if(state.selected!==p.src){state.unread[senderId]=(state.unread[senderId]||0)+1;persist();toast(`Nuovo messaggio da ${sender?.name||p.src}`)}}return}
+ if(p.type===TYPES.DATA_ACK){const id=bytesToHex(p.payload.slice(0,2)),frag=p.payload[4];const rec=state.outgoing.get(id);if(!rec)return;if(!rec.acked.includes(frag))rec.acked.push(frag);dbPut(rec);if(rec.acked.length>=rec.parts.length){rec.status='delivered';state.ackedCount++;state.outgoing.delete(id);dbDelete(id);const m=messageById(id);if(m)m.status='delivered';const release=new Uint8Array(12);release.set(hexToBytes(id),0);enqueue(frameItem({kind:'RELEASE',type:TYPES.RELEASE,dst:rec.targetAddr,payload:release,priority:0,urgent:true,dueAt:Date.now()+GUARD_MS}));state.lease=null}else if(rec.status==='sending'){state.lease=null;rec.status='queued';setTimeout(()=>scheduleClaim(rec),jitter(1800,4200))}return}
+}
+function scheduleDataAck(p,frag,quality){if(p.dst===BROADCAST)return;const payload=new Uint8Array(12);const pseudo=p.seq.toString(16).padStart(4,'0').toUpperCase();payload.set(hexToBytes(pseudo),0);payload[4]=frag;payload[5]=p.total;payload[6]=1;payload[7]=quality;enqueue(frameItem({kind:'DATA_ACK',type:TYPES.DATA_ACK,dst:p.src,payload,priority:0,urgent:true,robust:true,dueAt:Date.now()+GUARD_MS+jitter(100,400),meta:{seq:p.seq}}))}
+
+async function loadModem(){if(state.ggwave)return;setBadge(els.modemBadge,'caricamento','warn');let last;for(const url of ['https://cdn.jsdelivr.net/npm/ggwave@0.4.0/ggwave.js','https://unpkg.com/ggwave@0.4.0/ggwave.js']){try{if(!window.ggwave_factory)await loadScript(url);state.ggwave=await window.ggwave_factory();setBadge(els.modemBadge,'ggwave 0.4.0','ok');return}catch(e){last=e}}throw last||new Error('ggwave non disponibile')}
+function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('CDN non raggiungibile'));document.head.appendChild(s)})}
+function convertTypedArray(src,type){const b=new ArrayBuffer(src.byteLength);new src.constructor(b).set(src);return new type(b)}
+function freeModem(){if(state.modem&&state.ggwave){try{state.ggwave.free(state.modem)}catch{}state.modem=null}}
+
+function setPhase(phase, note=''){
+  if(state.networkPhase!==phase){
+    state.networkPhase=phase;
+    log(`Stato rete: ${phase}${note?' · '+note:''}`);
+  }
+}
+function isQuiet(){
+  return Date.now()<state.quietUntil || ['JOIN_WAIT','JOIN_TEST','JOIN_LOCKED','ELECTION_QUIET'].includes(state.networkPhase);
+}
+function extendQuiet(ms, phase=state.networkPhase){
+  state.quietUntil=Math.max(state.quietUntil,Date.now()+ms);
+  if(phase)setPhase(phase);
+}
+function chirpPlan(kind){
+  if(kind==='MASTER')return [[1050,2150],[2300,1500],[1250,2050]];
+  if(kind==='JOIN')return [[1350,2350],[1850,1150],[1550,2250]];
+  return [[2250,1250],[1150,1950],[2050,1050]];
+}
+function chirpSample(phase){return Math.sin(phase)}
+function buildChirpTemplate(kind,rate=CHIRP_RATE){
+  const plan=chirpPlan(kind),segment=Math.round(rate*CHIRP_SEGMENT_MS/1000),gap=Math.round(rate*CHIRP_GAP_MS/1000);
+  const total=plan.length*segment+(plan.length-1)*gap;
+  const out=new Float32Array(total);let offset=0;
+  for(let s=0;s<plan.length;s++){
+    const [f0,f1]=plan[s];let phase=0;
+    for(let i=0;i<segment;i++){
+      const x=i/Math.max(1,segment-1);
+      const frequency=f0+(f1-f0)*x;
+      phase+=2*Math.PI*frequency/rate;
+      const edge=Math.min(1,i/(rate*.018),(segment-1-i)/(rate*.018));
+      out[offset+i]=chirpSample(phase)*Math.max(0,edge);
+    }
+    offset+=segment;
+    if(s<plan.length-1)offset+=gap;
+  }
+  let energy=0;for(const v of out)energy+=v*v;
+  const scale=1/Math.sqrt(Math.max(1e-9,energy));
+  for(let i=0;i<out.length;i++)out[i]*=scale;
+  return out;
+}
+function ensureChirpTemplates(){
+  if(state.chirpTemplates)return;
+  state.chirpTemplates={
+    MASTER:buildChirpTemplate('MASTER'),
+    JOIN:buildChirpTemplate('JOIN'),
+    RESUME:buildChirpTemplate('RESUME')
+  };
+}
