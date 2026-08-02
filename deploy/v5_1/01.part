@@ -1,0 +1,449 @@
+"guide">
+        Con uno o due telefoni la chat funziona direttamente, senza coordinamento. Con 3–5 telefoni i due ID più bassi alternano SYNC e conferma.
+      </div>
+      <div class="hierarchy" id="hierarchyList"></div>
+    </div>
+    <div class="modal-actions"><button class="btn modalClose">Chiudi</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="guideOverlay">
+  <div class="modal">
+    <div class="modal-head"><h2>Prova rapida su due iPhone</h2><button class="icon-btn modalClose">×</button></div>
+    <div class="modal-body guide">
+      <ol>
+        <li>Apri la stessa pagina HTTPS su entrambi gli iPhone in Safari.</li>
+        <li>Scegli nomi diversi e lo stesso canale, poi premi <b>Salva</b>.</li>
+        <li>Premi <b>Avvia rete</b> su entrambi e consenti il microfono.</li>
+        <li>Alza il volume multimediale e tieni i telefoni a 30–100 cm.</li>
+        <li>Con due telefoni attendi che il nome dell’altro compaia: la chat viene aperta automaticamente. Se non accade, premi Presentati su entrambi.</li>
+        <li>Con due telefoni scrivi subito nel campo in basso e premi ➤. Da tre telefoni la richiesta di trasmissione viene coordinata automaticamente.</li>
+      </ol>
+      <div class="note">Safari sospende microfono e JavaScript quando la pagina resta in background o lo schermo si spegne. Durante la prova lascia AudioChat visibile.</div>
+      <h3>Gerarchia</h3>
+      <div>Il dispositivo rilevato viene selezionato automaticamente. Il tasto Presentati invia tre annunci robusti; da tre dispositivi in poi resta attivo il coordinamento distribuito.</div>
+      <h3>Limite reale</h3>
+      <div>È una rete acustica per testo breve. Non può raggiungere la velocità di Wi‑Fi o Bluetooth: ggwave privilegia robustezza e correzione degli errori.</div>
+    </div>
+    <div class="modal-actions"><button class="btn modalClose">Chiudi</button></div>
+  </div>
+</div>
+
+<div class="log-panel" id="logPanel"></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+'use strict';
+
+const VERSION = '5.1.0-ios-tx-boost';
+const BROADCAST = '0000000';
+const MAX_NODES = 5;
+
+const CONTROL_SIZE = 32;
+const SHORT_SIZE = 64;
+const LONG_SIZE = 96;
+const SHORT_UTF8_BYTES = 24;
+const LONG_UTF8_BYTES = 48;
+
+const FRAME_MS = 15000;
+const CONTROL_SLOT_MS = 1450;
+const TAKEOVER_GRACE_MS = 2600;
+const DEVICE_TIMEOUT = 105000;
+const ACK_TIMEOUT = 4300;
+const MAX_ATTEMPTS = 3;
+const QUEUE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const QUEUE_DB_NAME = 'AudioChatPersistentQueue';
+const QUEUE_DB_VERSION = 1;
+const QUEUE_STORE = 'outgoing';
+const PAD = '~';
+
+const CDN_URLS = [
+  'https://cdn.jsdelivr.net/npm/ggwave@0.4.0/ggwave.js',
+  'https://unpkg.com/ggwave@0.4.0/ggwave.js'
+];
+
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+
+const els = {
+  sidebar: $('#sidebar'), openSidebar: $('#openSidebar'), closeSidebar: $('#closeSidebar'),
+  nameInput: $('#nameInput'), roomInput: $('#roomInput'), saveIdentity: $('#saveIdentity'),
+  selfId: $('#selfId'), selfRank: $('#selfRank'), modemPill: $('#modemPill'),
+  micPill: $('#micPill'), channelPill: $('#channelPill'), startBtn: $('#startBtn'),
+  announceBtn: $('#announceBtn'), deviceCount: $('#deviceCount'), devices: $('#devices'),
+  chatAvatar: $('#chatAvatar'), chatTitle: $('#chatTitle'), chatSub: $('#chatSub'),
+  messages: $('#messages'), messageInput: $('#messageInput'), sendBtn: $('#sendBtn'),
+  settingsBtn: $('#settingsBtn'), hierarchyBtn: $('#hierarchyBtn'), guideBtn: $('#guideBtn'),
+  settingsOverlay: $('#settingsOverlay'), hierarchyOverlay: $('#hierarchyOverlay'),
+  guideOverlay: $('#guideOverlay'), hierarchyList: $('#hierarchyList'),
+  volumeInput: $('#volumeInput'), volumeValue: $('#volumeValue'), helloInput: $('#helloInput'),
+  clearDataBtn: $('#clearDataBtn'), logPanel: $('#logPanel'),
+  showLogToggle: $('#showLogToggle'), copyLogBtn: $('#copyLogBtn'),
+  clearLogBtn: $('#clearLogBtn'), activateSpeakerBtn: $('#activateSpeakerBtn'),
+  selectOutputBtn: $('#selectOutputBtn'), testToneBtn: $('#testToneBtn'),
+  txBoostInput: $('#txBoostInput'), txBoostValue: $('#txBoostValue'),
+  audioOutputStatus: $('#audioOutputStatus'), toast: $('#toast')
+};
+
+const stored = safeJson(localStorage.getItem('audiochat4.state'), {});
+const legacy = safeJson(localStorage.getItem('audiochat3.state'), {});
+
+const state = {
+  id: normalizeId(stored.id || legacy.id || randomId(7)),
+  name: stored.name || legacy.name || '',
+  room: stored.room || legacy.room || 'LOCALE',
+  selected: normalizePeer(stored.selected || BROADCAST),
+  volume: Number(stored.volume || legacy.volume || 10),
+  helloEvery: 30000,
+  histories: stored.histories || {},
+  unread: stored.unread || {},
+
+  devices: new Map(),
+  assemblies: new Map(),
+  seenMessages: new Set(),
+  txQueue: [],
+  awaitingAck: new Map(),
+  outgoing: new Map(),
+  pendingRequests: new Map(),
+
+  ggwave: null,
+  instances: {control: null, short: null, long: null},
+  context: null,
+  stream: null,
+  mediaSource: null,
+  processor: null,
+
+  running: false,
+  transmitting: false,
+  schedulerTimer: null,
+  maintenanceTimer: null,
+  frameTimers: new Set(),
+  busyUntil: 0,
+  leaseUntil: 0,
+  activeLease: null,
+
+  joined: false,
+  networkStartedAt: 0,
+  epoch: 0,
+  cycle: -1,
+  frameAnchor: 0,
+  lastSyncAt: 0,
+  nextFrameAt: 0,
+  syncQueuedFor: '',
+  currentSyncSender: '',
+  currentRosterHash: '',
+  lastConfirmAt: 0,
+  coordinatorAgreement: 'isolato',
+  lastJoinAt: 0,
+  lastIdentityTxAt: 0,
+  nextDirectBeaconAt: 0,
+  heartbeatSequence: 0,
+  heartbeatBackoff: 0,
+  lastHeartbeatTxAt: 0,
+  queueDb: null,
+  queueRestored: false,
+  outputDestination: null,
+  outputAudio: null,
+  outputMode: 'default',
+  rxCallbackCount: 0,
+  rxLastCallbackAt: 0,
+  rxLastLevel: 0,
+  rxWatchdogTimer: null,
+  activeSources: new Set(),
+  txGainNode: null,
+  txLimiterNode: null,
+  txBoost: Number(stored.txBoost || 1.8),
+  wakeLock: null
+};
+
+els.nameInput.value = state.name;
+els.roomInput.value = state.room;
+els.volumeInput.value = state.volume;
+els.volumeValue.textContent = state.volume;
+els.txBoostInput.value = String(state.txBoost);
+els.txBoostValue.textContent = `${state.txBoost.toFixed(1)}×`;
+els.helloInput.value = '24000';
+els.helloInput.disabled = true;
+els.selfId.textContent = state.id;
+
+function safeJson(value, fallback) {
+  try { return value ? JSON.parse(value) : fallback; } catch { return fallback; }
+}
+function normalizeId(value) {
+  const clean = String(value || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  return (clean + randomId(7)).slice(0, 7);
+}
+function normalizePeer(value) {
+  if (value === '00000000' || value === BROADCAST) return BROADCAST;
+  return normalizeId(value);
+}
+function randomId(length) {
+  const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  return [...bytes].map(byte => alphabet[byte % alphabet.length]).join('');
+}
+function tokenId() { return randomId(5); }
+function initials(name) { return (name || '?').trim().slice(0, 2).toUpperCase(); }
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]
+  ));
+}
+function nowTime(timestamp = Date.now()) {
+  return new Date(timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+function randomBetween(min, max) { return min + Math.random() * (max - min); }
+
+function isIOSLike() {
+  const platform = navigator.userAgentData?.platform || navigator.platform || '';
+  const ua = navigator.userAgent || '';
+  return /iPhone|iPad|iPod/i.test(ua) ||
+    (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function stableIdFraction(id = state.id) {
+  let hash = 2166136261;
+  for (const char of String(id)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967295;
+}
+
+function cryptoFraction() {
+  return crypto.getRandomValues(new Uint32Array(1))[0] / 4294967295;
+}
+
+function nextAdaptiveHeartbeatDelay() {
+  const stablePhase = stableIdFraction();
+  const randomPhase = cryptoFraction();
+  const sequencePhase = ((state.heartbeatSequence * 0.61803398875) % 1);
+  const minimum = 6500;
+  const variable = 9000 * (
+    0.20 * stablePhase +
+    0.55 * randomPhase +
+    0.25 * sequencePhase
+  );
+  const backoff = Math.min(12000, state.heartbeatBackoff);
+  state.heartbeatSequence++;
+  return Math.round(minimum + variable + backoff);
+}
+
+function scheduleNextDirectHeartbeat(fromNow = Date.now()) {
+  state.nextDirectBeaconAt = fromNow + nextAdaptiveHeartbeatDelay();
+}
+
+function toB36(number, width = 1) {
+  return Math.max(0, number).toString(36).toUpperCase().padStart(width, '0').slice(-width);
+}
+function fromB36(value) {
+  const parsed = parseInt(value, 36);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+function roomCode() {
+  const normalized = (state.room || 'LOCALE').trim().toUpperCase();
+  let hash = 0x811c9dc5;
+  for (const char of normalized) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36).toUpperCase().padStart(2, '0').slice(-2);
+}
+function packetPrefix(type) { return `A4${type}${roomCode()}${state.id}`; }
+function directMode() { return onlineNodes().length <= 2; }
+function asciiName(value) {
+  return String(value || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^0-9A-Za-z _.-]/g, '')
+    .trim().slice(0, 15) || state.id;
+}
+function persist() {
+  localStorage.setItem('audiochat4.state', JSON.stringify({
+    id: state.id, name: state.name, room: state.room, selected: state.selected,
+    volume: state.volume, txBoost: state.txBoost,
+    histories: state.histories, unread: state.unread
+  }));
+}
+
+function openQueueDb() {
+  if (state.queueDb) return Promise.resolve(state.queueDb);
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      reject(new Error('IndexedDB non disponibile'));
+      return;
+    }
+
+    const request = indexedDB.open(QUEUE_DB_NAME, QUEUE_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(QUEUE_STORE)) {
+        const store = db.createObjectStore(QUEUE_STORE, {keyPath: 'token'});
+        store.createIndex('senderRoom', ['senderId', 'room'], {unique: false});
+        store.createIndex('createdAt', 'createdAt', {unique: false});
+      }
+    };
+    request.onsuccess = () => {
+      state.queueDb = request.result;
+      state.queueDb.onversionchange = () => state.queueDb?.close();
+      resolve(state.queueDb);
+    };
+    request.onerror = () => reject(request.error || new Error('Errore apertura IndexedDB'));
+  });
+}
+
+async function queueDbPut(outgoing) {
+  try {
+    const db = await openQueueDb();
+    const record = {
+      ...outgoing,
+      senderId: state.id,
+      room: state.room,
+      updatedAt: Date.now()
+    };
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(QUEUE_STORE, 'readwrite');
+      tx.objectStore(QUEUE_STORE).put(record);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } catch (error) {
+    log(`Coda persistente: ${error.message}`, 'err');
+  }
+}
+
+async function queueDbDelete(token) {
+  try {
+    const db = await openQueueDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(QUEUE_STORE, 'readwrite');
+      tx.objectStore(QUEUE_STORE).delete(token);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } catch (error) {
+    log(`Eliminazione coda: ${error.message}`, 'err');
+  }
+}
+
+async function queueDbGetAll() {
+  const db = await openQueueDb();
+  return await new Promise((resolve, reject) => {
+    const tx = db.transaction(QUEUE_STORE, 'readonly');
+    const request = tx.objectStore(QUEUE_STORE).getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function restorePersistentQueue() {
+  if (state.queueRestored) return;
+  state.queueRestored = true;
+
+  try {
+    const records = await queueDbGetAll();
+    const now = Date.now();
+    let restored = 0;
+
+    for (const record of records) {
+      const expired = now - Number(record.createdAt || 0) > QUEUE_RETENTION_MS;
+      const belongsHere = record.senderId === state.id && record.room === state.room;
+
+      if (expired) {
+        await queueDbDelete(record.token);
+        continue;
+      }
+      if (!belongsHere || record.status === 'delivered') continue;
+
+      record.status = 'waiting_offline';
+      record.requestCycle = -1;
+      record.parts = Array.isArray(record.parts) ? record.parts : buildMessageParts(record.text || '');
+      record.acked = Array.isArray(record.acked) ? record.acked : [];
+      state.outgoing.set(record.token, record);
+
+      const message = findMessage(record.token);
+      if (message && message.status !== 'delivered') {
+        message.status = 'waiting_offline';
+        message.acked = Array.isArray(record.acked) ? [...record.acked] : [];
+      }
+      restored++;
+    }
+
+    if (restored) {
+      persist();
+      renderConversation();
+      log(`${restored} messagg${restored === 1 ? 'io ripristinato' : 'i ripristinati'} dalla coda persistente.`, 'ok');
+    }
+  } catch (error) {
+    state.queueRestored = false;
+    log(`Ripristino coda: ${error.message}`, 'err');
+  }
+}
+
+function setPill(element, text, mode = '') {
+  element.className = 'pill' + (mode ? ' ' + mode : '');
+  element.innerHTML = `<span class="dot"></span>${escapeHtml(text)}`;
+}
+function showToast(text) {
+  els.toast.textContent = text;
+  els.toast.classList.add('show');
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => els.toast.classList.remove('show'), 2200);
+}
+function log(text, kind = '') {
+  const row = document.createElement('div');
+  row.className = 'log-line ' + (kind === 'err' ? 'log-err' : kind === 'ok' ? 'log-ok' : '');
+  row.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+  els.logPanel.prepend(row);
+  while (els.logPanel.children.length > 220) els.logPanel.lastChild.remove();
+}
+function setLogVisibility(visible){
+  els.logPanel.classList.toggle('open', visible);
+  if(els.showLogToggle) els.showLogToggle.checked = visible;
+  localStorage.setItem('audiochat.showLog', visible ? '1' : '0');
+}
+async function copyLogToClipboard(){
+  const text=[...els.logPanel.children].reverse().map(row=>row.textContent).join('\n');
+  if(!text){showToast('Il log è vuoto');return}
+  try{await navigator.clipboard.writeText(text);showToast('Log copiato')}
+  catch{
+    const area=document.createElement('textarea');
+    area.value=text;area.style.position='fixed';area.style.opacity='0';
+    document.body.appendChild(area);area.select();document.execCommand('copy');area.remove();
+    showToast('Log copiato');
+  }
+}
+function clearLogPanel(){els.logPanel.innerHTML='';showToast('Log svuotato')}
+function closeOverlays() { $$('.overlay').forEach(item => item.classList.remove('open')); }
+
+function crc16Ascii(text) {
+  let crc = 0xFFFF;
+  for (let position = 0; position < text.length; position++) {
+    crc ^= (text.charCodeAt(position) & 0xFF) << 8;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc & 0x8000)
+        ? ((crc << 1) ^ 0x1021) & 0xFFFF
+        : (crc << 1) & 0xFFFF;
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+function finishPacket(content, size) {
+  if (content.length > size - 4) {
+    throw new Error(`Pacchetto ${content.length} > ${size - 4}`);
+  }
+  const body = content.padEnd(size - 4, PAD);
+  return body + crc16Ascii(body);
+}
+function validatePacket(packet, size) {
+  if (typeof packet !== 'string' || packet.length !== size) return false;
+  const body = packet.slice(0, -4);
+  return crc16Ascii(body) === packet.slice(-4);
+}
+function bytesToBase64Url(bytes) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  ret
