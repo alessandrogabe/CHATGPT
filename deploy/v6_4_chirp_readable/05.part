@@ -1,0 +1,181 @@
+
+function appendChirpSamples(input,sampleRate){
+  ensureChirpTemplates();
+  const step=sampleRate/CHIRP_RATE;
+  for(let pos=0;pos<input.length;pos+=step){
+    const index=Math.min(input.length-1,Math.floor(pos));
+    state.chirpBuffer[state.chirpWrite]=input[index];
+    state.chirpWrite=(state.chirpWrite+1)%state.chirpBuffer.length;
+    state.chirpFilled=Math.min(state.chirpBuffer.length,state.chirpFilled+1);
+  }
+}
+function circularSample(back){
+  let index=state.chirpWrite-1-back;
+  while(index<0)index+=state.chirpBuffer.length;
+  return state.chirpBuffer[index];
+}
+function correlateRecent(template,offset){
+  if(state.chirpFilled<template.length+offset)return 0;
+  let dot=0,energy=0;
+  for(let i=0;i<template.length;i++){
+    const sample=circularSample(offset+template.length-1-i);
+    dot+=sample*template[i];energy+=sample*sample;
+  }
+  return dot/Math.sqrt(Math.max(1e-9,energy));
+}
+function scanChirpCorrelation(){
+  if(Date.now()<state.toneCooldownUntil||Date.now()-state.chirpLastScan<85)return;
+  state.chirpLastScan=Date.now();
+  ensureChirpTemplates();
+  const offsets=[0,80,160,240,320,400,480,560,640];
+  const scores={};
+  for(const [kind,template] of Object.entries(state.chirpTemplates)){
+    let best=0;
+    for(const offset of offsets)best=Math.max(best,Math.abs(correlateRecent(template,offset)));
+    scores[kind]=best;
+  }
+  state.chirpScores=scores;
+  const ranked=Object.entries(scores).sort((a,b)=>b[1]-a[1]);
+  const [bestKind,bestScore]=ranked[0],secondScore=ranked[1][1];
+  const margin=bestScore-secondScore;
+  if(bestScore>=CHIRP_THRESHOLD_HIGH&&margin>=CHIRP_MARGIN){
+    state.chirpCandidate=null;handleControlTone(bestKind,bestScore);return;
+  }
+  if(bestScore>=CHIRP_THRESHOLD_LOW&&margin>=CHIRP_MARGIN){
+    if(state.chirpCandidate===bestKind&&Date.now()-state.chirpCandidateAt<420){
+      state.chirpCandidate=null;handleControlTone(bestKind,bestScore);return;
+    }
+    state.chirpCandidate=bestKind;state.chirpCandidateAt=Date.now();
+  }else if(Date.now()-state.chirpCandidateAt>500)state.chirpCandidate=null;
+}
+async function playControlTone(kind){
+  if(!state.context)return;
+  await state.context.resume();
+  const plan=chirpPlan(kind);let t=state.context.currentTime+.06;
+  for(let s=0;s<plan.length;s++){
+    const [f0,f1]=plan[s],osc=state.context.createOscillator(),gain=state.context.createGain();
+    osc.type='sine';
+    osc.frequency.setValueAtTime(f0,t);
+    osc.frequency.linearRampToValueAtTime(f1,t+CHIRP_SEGMENT_MS/1000);
+    gain.gain.setValueAtTime(.0001,t);
+    gain.gain.exponentialRampToValueAtTime(.18,t+.018);
+    gain.gain.setValueAtTime(.18,t+CHIRP_SEGMENT_MS/1000-.018);
+    gain.gain.exponentialRampToValueAtTime(.0001,t+CHIRP_SEGMENT_MS/1000);
+    osc.connect(gain);gain.connect(ensureOutput());
+    osc.start(t);osc.stop(t+CHIRP_SEGMENT_MS/1000+.025);
+    t+=(CHIRP_SEGMENT_MS+(s<plan.length-1?CHIRP_GAP_MS:0))/1000;
+  }
+  state.toneCooldownUntil=Date.now()+1300;
+  state.carrierUntil=Math.max(state.carrierUntil,Date.now()+900);
+  log(`Chirp ${kind} emesso · ${(CHIRP_TOTAL_MS/1000).toFixed(2)}s`);
+}
+function handleControlTone(kind,score=0){
+  if(Date.now()<state.toneCooldownUntil)return;
+  state.toneCooldownUntil=Date.now()+1700;
+  stopSources();
+  state.transmitting=false;
+  state.carrierUntil=Math.max(state.carrierUntil,Date.now()+JOIN_PROVISIONAL_MS);
+  log(`Chirp ${kind} confermato · correlazione ${score.toFixed(2)}`,'ok');
+  if(kind==='JOIN'){
+    extendQuiet(JOIN_PROVISIONAL_MS,'JOIN_WAIT');
+    log('JOIN TONE rilevato · silenzio provvisorio 3s','ok');
+    if(isCoordinator() && state.devices.size>0)setTimeout(()=>openJoinSession(),350);
+    return;
+  }
+  if(kind==='MASTER'){
+    extendQuiet(JOIN_PROVISIONAL_MS,'ELECTION_QUIET');
+    log('MASTER TONE rilevato · ascolto coordinatore','ok');
+    return;
+  }
+  if(kind==='RESUME'){
+    state.quietUntil=0;state.joinSessionUntil=0;state.joinAbsoluteUntil=0;state.joinCandidateId=null;
+    setPhase(state.devices.size?'ACTIVE':'LISTEN_ONLY','tono ripresa');
+  }
+}
+function electionDelay(){
+  const span=ELECTION_WINDOW_MS;
+  return 500+Math.floor((stablePriority('ELECTION:'+state.electionAttempt)/997)*span)+jitter(80,350);
+}
+function scheduleElection(){
+  state.electionAttempt++;
+  state.electionAt=Date.now()+electionDelay();
+  setPhase('LISTEN_ONLY',`elezione tra ${Math.round((state.electionAt-Date.now())/1000)}s`);
+}
+async function becomeCoordinator(){
+  if(state.devices.size||Date.now()<state.quietUntil||carrierBusy())return scheduleElection();
+  setPhase('ELECTION_QUIET');
+  await playControlTone('MASTER');
+  extendQuiet(JOIN_PROVISIONAL_MS,'ELECTION_QUIET');
+  setTimeout(()=>{
+    if(!state.running||state.devices.size)return;
+    state.helloScheduledRound=-1;state.helloSentRound=-1;
+    scheduleHello('beacon coordinatore');
+    setPhase('COORDINATOR','beacon inviato');
+  },500);
+}
+function joinOpenPayload(){
+  const p=new Uint8Array(12);
+  p.set(hexToBytes(state.nodeId),0);
+  p[6]=Math.min(255,Math.round(JOIN_SESSION_MS/1000));
+  p[7]=Math.min(255,Math.round(JOIN_ABSOLUTE_MS/1000));
+  crypto.getRandomValues(p.subarray(8,12));
+  return p;
+}
+function openJoinSession(){
+  if(!state.running||!isCoordinator())return;
+  state.joinSessionUntil=Date.now()+JOIN_SESSION_MS;
+  state.joinAbsoluteUntil=Date.now()+JOIN_ABSOLUTE_MS;
+  extendQuiet(JOIN_ABSOLUTE_MS,'JOIN_TEST');
+  enqueue(frameItem({
+    kind:'JOIN_OPEN',type:TYPES.JOIN_OPEN,payload:joinOpenPayload(),priority:0,urgent:true,robust:true,
+    dueAt:Date.now()+250,meta:{onSent:()=>log('JOIN session aperta · 15s')}
+  }));
+}
+function requestJoin(){
+  if(!state.running)return toast('Avvia prima la rete');
+  if(state.devices.size===0){
+    state.helloScheduledRound=-1;state.helloSentRound=-1;
+    playControlTone('MASTER').then(()=>setTimeout(()=>scheduleHello('presentazione iniziale'),450));
+    return;
+  }
+  setPhase('JOIN_REQUEST');
+  playControlTone('JOIN');
+  extendQuiet(JOIN_PROVISIONAL_MS,'JOIN_REQUEST');
+}
+function profileTestPayload(candidateId){
+  const p=new Uint8Array(12);
+  p.set(hexToBytes(candidateId||state.nodeId),0);
+  p[6]=1;
+  p[7]=2;
+  p[8]=10;
+  return p;
+}
+function scheduleProfileTest(candidateAddr,candidateId){
+  enqueue(frameItem({
+    kind:'PROFILE_TEST',type:TYPES.PROFILE_TEST,dst:candidateAddr,payload:profileTestPayload(candidateId),
+    priority:0,urgent:true,robust:true,dueAt:Date.now()+700
+  }));
+}
+function finishJoinSession(){
+  state.quietUntil=0;state.joinSessionUntil=0;state.joinAbsoluteUntil=0;state.joinCandidateId=null;
+  enqueue(frameItem({kind:'RESUME',type:TYPES.RESUME,payload:new Uint8Array(12),priority:0,urgent:true,robust:true,dueAt:Date.now()+250}));
+  setTimeout(()=>playControlTone('RESUME'),350);
+  setPhase('ACTIVE','ingresso completato');
+}
+function initModem(){freeModem();const p=state.ggwave.getDefaultParameters();p.payloadLength=FRAME_CHARS;p.sampleRateInp=state.context.sampleRate;p.sampleRateOut=state.context.sampleRate;p.sampleRate=state.context.sampleRate;p.operatingMode=state.ggwave.GGWAVE_OPERATING_MODE_RX_AND_TX|state.ggwave.GGWAVE_OPERATING_MODE_USE_DSS;state.modem=state.ggwave.init(p);if(!state.modem)throw new Error('Modem fixed-length 64 non inizializzato')}
+function ensureOutput(){if(state.txGain)return state.txGain;state.txGain=state.context.createGain();state.txGain.gain.value=state.boost;state.limiter=state.context.createDynamicsCompressor();state.limiter.threshold.value=-7;state.limiter.knee.value=5;state.limiter.ratio.value=18;state.limiter.attack.value=.002;state.limiter.release.value=.09;state.txGain.connect(state.limiter);state.limiter.connect(state.context.destination);return state.txGain}
+async function transmit(frame,robust=false){await state.context.resume();const protocol=robust?state.ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_NORMAL:state.ggwave.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_FAST;const wave=state.ggwave.encode(state.modem,frame,protocol,state.volume),samples=convertTypedArray(wave,Float32Array),buffer=state.context.createBuffer(1,samples.length,state.context.sampleRate);buffer.getChannelData(0).set(samples);return new Promise((resolve,reject)=>{const source=state.context.createBufferSource();source.buffer=buffer;source.loop=false;source.connect(ensureOutput());state.activeSources.add(source);const duration=buffer.duration*1000;let done=false;const finish=()=>{if(done)return;done=true;clearTimeout(kill);state.activeSources.delete(source);try{source.disconnect()}catch{}resolve(duration)};source.onended=finish;const kill=setTimeout(()=>{try{source.stop()}catch{}finish()},duration+600);try{source.start(state.context.currentTime+.04)}catch(e){reject(e)}})}
+function stopSources(){for(const s of [...state.activeSources]){try{s.stop()}catch{}try{s.disconnect()}catch{}}state.activeSources.clear()}
+
+async function startNetwork(){if(state.running){stopNetwork();return}try{
+ await loadModem();const AC=window.AudioContext||window.webkitAudioContext;if(!state.context||state.context.state==='closed')state.context=new AC({latencyHint:'interactive'});await state.context.resume();initModem();
+ try{state.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1,sampleRate:state.context.sampleRate}})}catch{state.stream=await navigator.mediaDevices.getUserMedia({audio:true})}
+ state.source=state.context.createMediaStreamSource(state.stream);state.analyser=state.context.createAnalyser();state.analyser.fftSize=2048;state.analyser.smoothingTimeConstant=.2;state.analyserData=new Float32Array(state.analyser.frequencyBinCount);state.source.connect(state.analyser);
+ state.processor=state.context.createScriptProcessor(2048,1,1);state.processor.onaudioprocess=onAudio;state.source.connect(state.processor);state.processor.connect(state.context.destination);
+ ensureChirpTemplates();state.chirpBuffer.fill(0);state.chirpWrite=0;state.chirpFilled=0;state.chirpCandidate=null;
+ state.running=true;state.discoveryRoundStarted=Date.now();state.nextDiscoveryRoundAt=Date.now()+DISCOVERY_ROUND_MS;state.helloSentRound=-1;state.helloScheduledRound=-1;state.listenUntil=Date.now()+ELECTION_LISTEN_MS;state.nextPresenceAt=Date.now()+PRESENCE_MIN;state.nextSyncAt=Date.now()+DISCOVERY_ROUND_MS;state.quietUntil=0;state.joinSessionUntil=0;state.joinAbsoluteUntil=0;state.joinCandidateId=null;startTimers();setBadge(els.micBadge,'attivo','ok');els.startBtn.textContent='Ferma rete';els.announceBtn.disabled=false;els.sendBtn.disabled=false;log(`AudioMesh ${VERSION} avviata · ascolto iniziale 3s · fingerprint ${state.fingerprint}`,'ok');setPhase('LISTEN_ONLY');scheduleElection();restoreOutbox();renderAll()
+ }catch(e){log('Avvio fallito: '+e.message,'err');stopNetwork();toast('Avvio non riuscito: '+e.message)}}
+function stopNetwork(){state.running=false;state.networkPhase='IDLE';state.quietUntil=0;state.joinSessionUntil=0;state.joinAbsoluteUntil=0;for(const t of state.timers)clearInterval(t);state.timers=[];stopSources();if(state.processor){try{state.processor.disconnect()}catch{}state.processor.onaudioprocess=null}if(state.source)try{state.source.disconnect()}catch{}if(state.stream)state.stream.getTracks().forEach(t=>t.stop());state.processor=state.source=state.stream=state.analyser=null;setBadge(els.micBadge,'spento');setBadge(els.carrierBadge,'inattivo');els.startBtn.textContent='Avvia rete';els.announceBtn.disabled=true;els.sendBtn.disabled=true;renderAll()}
+function startTimers(){state.timers.push(setInterval(()=>{scanCarrier();processQueue();maintenance();renderStatus()},80));state.timers.push(setInterval(renderDashboard,1000))}
+function onAudio(e){const input=e.inputBuffer.getChannelData(0),out=e.outputBuffer.getChannelData(0);out.fill(0);let sum=0,mean=0,peak=0;for(const x of input)mean+=x;mean/=input.length;const centered=new Float32Array(input.length);for(let i=0;i<input.length;i++){const c=input[i]-mean;centered[i]=c;sum+=c*c;peak=Math.max(peak,Math.abs(c))}appendChirpSamples(centered,state.context.sampleRate);scanChirpCorrelation();const rms=Math.sqrt(sum/input.length);state.rxLevel=rms;state.rxPeak=state.rxPeak*.9+peak*.1;if(rms<state.noiseFloor*3)state.noiseFloor=state.noiseFloor*.995+rms*.005;let gain=1;if(rms>Math.max(.00045,state.noiseFloor*2.5))gain=clamp(.03/rms,1,state.agcMax);state.rxGain=state.rxGain*.86+gain*.14;const samples=new Float32Array(input.length);for(let i=0;i<input.length;i++)samples[i]=clamp(centered[i]*state.rxGain,-.95,.95);if(state.transmitting)return;try{const raw=convertTypedArray(samples,Int8Array),res=state.ggwave.decode(state.modem,raw);if(res&&res.length){const text=td.decode(res).replace(/\0/g,'');handleDecoded(text)}}catch(e){log('Decoder: '+e.message,'err')}}
+function scanCarrier(){if(!state.analyser||state.transmitting)return;state.analyser.getFloatFrequencyData(state.analyserData);const binHz=state.context.sampleRate/state.analyser.fftSize,start=Math.floor(1300/binHz),end=Math.min(state.analyserData.length-2,Math.ceil(9500/binHz));const vals=[];for(let i=start;i<=end;i++)vals.push(state.analyserData[i]);const sorted=[...vals].sort((a,b)=>a-b),median=sorted[Math.floor(sorted.length*.55)]||-120;let peaks=0,spre
