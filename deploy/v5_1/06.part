@@ -1,0 +1,77 @@
+    showToast('Avvia prima la rete');
+    return;
+  }
+  await state.context.resume();
+  const ok = await configureSpeakerOutput(!isIOSLike());
+  showToast(
+    isIOSLike()
+      ? 'Su iPhone è attiva l’uscita Web Audio diretta'
+      : (ok ? 'Uscita multimediale attivata' : 'Uso uscita predefinita')
+  );
+};
+els.selectOutputBtn.onclick = selectAudioOutput;
+els.testToneBtn.onclick = playVolumeTest;
+els.txBoostInput.oninput = () => {
+  state.txBoost = Number(els.txBoostInput.value);
+  els.txBoostValue.textContent = `${state.txBoost.toFixed(1)}×`;
+  if (state.txGainNode) state.txGainNode.gain.value = state.txBoost;
+  persist();
+};
+els.volumeInput.oninput = () => {
+  state.volume = Number(els.volumeInput.value);
+  els.volumeValue.textContent = state.volume;
+  persist();
+};
+els.clearDataBtn.onclick = () => {
+  if (confirm('Cancellare identità, messaggi e impostazioni locali?')) {
+    localStorage.removeItem('audiochat4.state');
+    localStorage.removeItem('audiochat3.state');
+    try {
+      state.queueDb?.close();
+      indexedDB.deleteDatabase(QUEUE_DB_NAME);
+    } catch {}
+    location.reload();
+  }
+};
+
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && state.running) {
+    try {
+      await state.context.resume();
+      await requestWakeLock();
+      state.joined = directMode();
+      state.heartbeatBackoff = randomBetween(500, 3500);
+      scheduleNextDirectHeartbeat();
+      if (directMode()) announceBurst();
+      else frameTimeout(queueJoin, randomBetween(500, 2600));
+      log('Pagina riattivata; fase heartbeat ricalcolata.');
+    } catch {}
+  }
+});
+window.addEventListener('beforeunload', () => {
+  if (state.stream) state.stream.getTracks().forEach(track => track.stop());
+  if (state.ggwave) {
+    for (const instance of Object.values(state.instances)) {
+      try { if (instance) state.ggwave.free(instance); } catch {}
+    }
+  }
+});
+
+persist();
+renderAll();
+restorePersistentQueue();
+setLogVisibility(localStorage.getItem('audiochat.showLog') === '1');
+if (isIOSLike()) {
+  els.selectOutputBtn.style.display = 'none';
+  els.activateSpeakerBtn.textContent = 'Riattiva audio iOS';
+  updateAudioOutputStatus('Uscita Web Audio diretta (iOS)', true);
+} else if (!navigator.mediaDevices?.selectAudioOutput) {
+  els.selectOutputBtn.style.display = 'none';
+}
+setPill(els.modemPill, 'da caricare', 'warn');
+els.guideOverlay.classList.add('open');
+log(`AudioChat ${VERSION} pronto · TX boost ${state.txBoost.toFixed(1)}× · limiter attivo`);
+})();
+</script>
+</body>
+</html>
