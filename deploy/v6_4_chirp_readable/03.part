@@ -1,0 +1,126 @@
+$/.test(text))return null;let raw;try{raw=fromB64url(text)}catch{return null}if(raw.length!==48)return null;const nonce=raw.slice(0,12),nonceId=bytesToHex(nonce);if(state.seenNonces.has(nonceId)){state.replayDrops++;return null}const epoch=nonce[0];try{const key=await epochKey(epoch);const plain=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:nonce,additionalData:state.aad,tagLength:128},key,raw.slice(12)));if(plain.length!==20||plain[0]!==6||plain[2]!==epoch)return null;state.seenNonces.set(nonceId,Date.now());if(state.seenNonces.size>700)state.seenNonces.delete(state.seenNonces.keys().next().value);return{type:plain[1],epoch,src:(plain[3]>>4)&15,dst:plain[3]&15,seq:(plain[4]<<8)|plain[5],frag:plain[6],total:plain[7],payload:plain.slice(8,20),nonceId}}catch{state.authFailures++;return null}
+}
+
+function ownNode(){return{id:state.nodeId,name:state.name,lastSeen:Date.now(),self:true,quality:100,confirmed:true,tx:state.txCount,rx:state.rxCount}}
+function activeNodes(){const now=Date.now(),list=[ownNode()];for(const d of state.devices.values())if(now-d.lastSeen<DEVICE_TIMEOUT)list.push({...d,self:false});return list.sort((a,b)=>a.id.localeCompare(b.id)).slice(0,MAX_NODES)}
+function roster(){return activeNodes()}
+function addressOf(id){return roster().findIndex(n=>n.id===id)}
+function ownAddress(){const a=addressOf(state.nodeId);return a<0?UNASSIGNED:a}
+function coordinator(){return roster()[0]||ownNode()}
+function isCoordinator(){return coordinator().id===state.nodeId}
+function rosterHashBytes(){let h=2166136261;for(const n of roster()){for(const c of n.id){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}}return new Uint8Array([(h>>>24)&255,(h>>>16)&255,(h>>>8)&255,h&255])}
+function rosterHash(){return bytesToHex(rosterHashBytes())}
+function updateDeviceByAddress(addr,patch={}){if(addr===ownAddress())return;const found=[...state.devices.values()].find(d=>addressOf(d.id)===addr);if(found)Object.assign(found,patch,{lastSeen:Date.now()})}
+
+function historyKey(targetId){return targetId||'broadcast'}
+function history(targetId){const k=historyKey(targetId);return state.histories[k]||(state.histories[k]=[])}
+function selectedNode(){if(state.selected===BROADCAST)return null;return roster().find(n=>addressOf(n.id)===state.selected)||null}
+function addMessage(targetId,msg){history(targetId).push(msg);if(history(targetId).length>250)history(targetId).shift();persist();renderConversation()}
+function messageById(id){for(const arr of Object.values(state.histories))for(const m of arr)if(m.id===id)return m;return null}
+function statusIcon(s){return s==='delivered'?'✓✓':s==='sent'?'✓':s==='queued'||s==='reserving'?'🕓':s==='sending'?'◌':s==='failed'?'!':'✓'}
+
+async function openDb(){if(state.db)return state.db;return new Promise((resolve,reject)=>{const r=indexedDB.open('AudioMesh6',1);r.onupgradeneeded=()=>{const db=r.result;if(!db.objectStoreNames.contains('outbox'))db.createObjectStore('outbox',{keyPath:'id'})};r.onsuccess=()=>{state.db=r.result;resolve(state.db)};r.onerror=()=>reject(r.error)})}
+async function dbPut(v){try{const db=await openDb();await new Promise((res,rej)=>{const tx=db.transaction('outbox','readwrite');tx.objectStore('outbox').put(v);tx.oncomplete=res;tx.onerror=()=>rej(tx.error)})}catch(e){log('IndexedDB: '+e.message,'err')}}
+async function dbDelete(id){try{const db=await openDb();const tx=db.transaction('outbox','readwrite');tx.objectStore('outbox').delete(id)}catch{}}
+async function restoreOutbox(){try{const db=await openDb(),rows=await new Promise((res,rej)=>{const r=db.transaction('outbox').objectStore('outbox').getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error)});for(const x of rows){if(x.networkFingerprint===state.fingerprint&&x.status!=='delivered'){x.status='queued';state.outgoing.set(x.id,x);const m=messageById(x.id);if(m)m.status='queued'}}if(rows.length)renderConversation()}catch(e){log('Ripristino coda: '+e.message,'err')}}
+
+function encodeNameChunks(){const bytes=te.encode(state.name.slice(0,12));const chunks=[];for(let i=0;i<bytes.length||i===0;i+=6){const p=new Uint8Array(12);p.set(hexToBytes(state.nodeId),0);p.set(bytes.slice(i,i+6),6);chunks.push(p)}return chunks.slice(0,2)}
+function payloadNodePresence(){const p=new Uint8Array(12);p.set(hexToBytes(state.nodeId),0);p.set(rosterHashBytes(),6);p[10]=ownAddress();p[11]=(isCoordinator()?1:0)|(state.lease?2:0);return p}
+function frameItem({kind,type,dst=BROADCAST,payload=new Uint8Array(12),frag=0,total=1,priority=3,dueAt=Date.now(),robust=false,urgent=false,lease=false,meta={}}){return{kind,type,dst,payload,frag,total,priority,dueAt,robust,urgent,lease,attempts:0,collisionCount:0,meta}}
+function enqueue(item){state.queue.push(item);scheduleProcess()}
+let processing=false;
+function scheduleProcess(){if(processing)return;queueMicrotask(processQueue)}
+function currentSlot(){const nodes=roster(),n=Math.max(1,nodes.length),cycle=state.slotDuration*n,elapsed=((Date.now()-state.slotAnchor)%cycle+cycle)%cycle;return Math.floor(elapsed/state.slotDuration)}
+function slotOwnerAddr(){return currentSlot()}
+function carrierBusy(){return state.transmitting||Date.now()<state.carrierUntil}
+function reserveActive(){return state.lease&&Date.now()<state.lease.until}
+function stablePriority(seed=''){let h=2166136261;for(const c of state.nodeId+seed){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0)%997}
+function discoveryRound(){return Math.floor((Date.now()-state.discoveryRoundStarted)/DISCOVERY_ROUND_MS)}
+function discoveryDelay(round=discoveryRound()){const rank=stablePriority('DISCOVERY:'+round)%10;return 700+rank*DISCOVERY_SLOT_MS+jitter(80,480)}
+function postponeForCarrier(item){
+ item.collisionCount=(item.collisionCount||0)+1;
+ state.collisionTotal++;
+ const exponent=Math.min(5,item.collisionCount);
+ const window=Math.min(18000,650*(2**exponent));
+ const deterministic=(stablePriority(item.kind+':'+item.collisionCount)/997)*window*.65;
+ item.dueAt=Math.max(Date.now(),state.carrierUntil)+GUARD_MS+deterministic+jitter(180,Math.max(500,window*.35));
+ log(`${item.kind} sospeso · carrier/backoff ${Math.round(item.dueAt-Date.now())} ms`);
+}
+function canUseMedium(item){
+ const joinControl=[TYPES.JOIN_OPEN,TYPES.JOIN_LOCK,TYPES.PROFILE_TEST,TYPES.PROFILE_ACK,TYPES.ASSIGN,TYPES.READY,TYPES.RESUME,TYPES.HELLO];
+ if(isQuiet()&&!joinControl.includes(item.type))return false;
+ if(Date.now()<state.listenUntil&&!joinControl.includes(item.type))return false;
+ if(carrierBusy())return false;
+ if(reserveActive()&&state.lease.owner!==ownAddress()&&!item.urgent)return false;
+ if(item.lease&&state.lease?.owner===ownAddress())return true;
+ if(item.urgent)return true;
+ return roster().length<=2||slotOwnerAddr()===ownAddress();
+}
+async function processQueue(){if(processing||!state.running||state.transmitting||!state.queue.length)return;processing=true;try{
+ const now=Date.now();state.queue.sort((a,b)=>a.priority-b.priority||a.dueAt-b.dueAt);const item=state.queue.find(x=>x.dueAt<=now);if(!item)return;
+ if(Date.now()<state.listenUntil){item.dueAt=Math.max(item.dueAt,state.listenUntil+jitter(120,480));return}
+ if(carrierBusy()){postponeForCarrier(item);return}
+ if(!canUseMedium(item)){item.dueAt=Math.max(item.dueAt,Date.now()+jitter(320,1100));return}
+ state.queue.splice(state.queue.indexOf(item),1);state.transmitting=true;renderStatus();
+ const src=ownAddress(),seq=item.meta.seq??(++state.seq&65535);const frame=await encryptFrame(item.type,src,item.dst,seq,item.frag,item.total,item.payload);const duration=await transmit(frame,item.robust);state.txCount++;state.lastTxDuration=duration;state.slotDuration=clamp(Math.ceil((duration+1200)/500)*500,4800,10000);state.carrierUntil=Date.now()+GUARD_MS;
+ const mandatoryListen=item.type===TYPES.HELLO?LISTEN_AFTER_HELLO_MS:(item.type===TYPES.CLAIM?CLAIM_WAIT_MS:LISTEN_AFTER_CONTROL_MS);
+ state.listenUntil=Math.max(state.listenUntil,Date.now()+mandatoryListen);
+ log(`TX ${item.kind} · frame 64 · ${(duration/1000).toFixed(2)}s · ascolto ${Math.round(mandatoryListen/1000)}s`);
+ if(item.meta.onSent)item.meta.onSent(seq,duration);
+ }catch(e){log('TX fallita: '+e.message,'err')}finally{state.transmitting=false;processing=false;renderAll();if(state.queue.length)setTimeout(scheduleProcess,120)}}
+
+function scheduleHello(reason='discovery'){
+ const round=discoveryRound();
+ if(state.helloScheduledRound===round||state.helloSentRound===round)return;
+ state.helloScheduledRound=round;
+ const chunks=encodeNameChunks(),base=Math.max(Date.now()+350,state.discoveryRoundStarted+round*DISCOVERY_ROUND_MS+discoveryDelay(round));
+ chunks.forEach((p,i)=>enqueue(frameItem({
+  kind:`HELLO ${i+1}/${chunks.length}`,type:TYPES.HELLO,payload:p,frag:i,total:chunks.length,priority:5,
+  dueAt:base+i*(LISTEN_AFTER_HELLO_MS+1200),robust:true,
+  meta:{onSent:()=>{state.helloSentRound=round;state.helloScheduledRound=-1;state.nextDiscoveryRoundAt=state.discoveryRoundStarted+(round+1)*DISCOVERY_ROUND_MS}}
+ })));
+ log(`HELLO programmato · round ${round} · ${reason} · tra ${Math.max(0,Math.round((base-Date.now())/1000))}s`);
+}
+function schedulePresence(manual=false){
+ if(!manual&&state.devices.size===0)return;
+ const due=Date.now()+jitter(manual?500:1600,manual?1800:4200);
+ enqueue(frameItem({kind:'PRESENCE',type:TYPES.PRESENCE,payload:payloadNodePresence(),priority:4,dueAt:due,robust:true,meta:{onSent:()=>{state.nextPresenceAt=Date.now()+jitter(PRESENCE_MIN,PRESENCE_MAX)}}}))
+}
+function schedulePresenceAck(targetAddr,targetId,seq,quality){const p=new Uint8Array(12);p.set(hexToBytes(targetId),0);p.set(rosterHashBytes(),6);p[10]=clamp(Math.round(quality),0,100);p[11]=ownAddress();const slot=ownAddress();enqueue(frameItem({kind:'PRESENCE_ACK',type:TYPES.PRESENCE_ACK,dst:targetAddr,payload:p,priority:0,urgent:true,robust:true,dueAt:Date.now()+GUARD_MS+slot*260+jitter(40,180),meta:{seq}}))}
+function scheduleSync(){const p=new Uint8Array(12);p.set(hexToBytes(state.nodeId),0);p.set(rosterHashBytes(),6);p[10]=clamp(Math.round(state.slotDuration/500),1,255);p[11]=state.rosterVersion&255;enqueue(frameItem({kind:'SYNC',type:TYPES.SYNC,payload:p,priority:2,robust:true,dueAt:Date.now()+jitter(400,1200),meta:{onSent:()=>{state.slotAnchor=Date.now()+GUARD_MS;state.nextSyncAt=Date.now()+30000}}}))}
+function scheduleRoster(){if(!isCoordinator())return;const nodes=roster();nodes.forEach((n,i)=>{const p=new Uint8Array(12);p.set(hexToBytes(n.id),0);p[6]=i;p[7]=n.id===state.nodeId?1:0;const nh=fnv32(te.encode(n.name||n.id));p.set(nh,8);enqueue(frameItem({kind:'ROSTER',type:TYPES.ROSTER,payload:p,frag:i,total:nodes.length,priority:3,dueAt:Date.now()+1000+i*(state.slotDuration+300),robust:true}))})}
+function fnv32(bytes){let h=2166136261;for(const b of bytes){h^=b;h=Math.imul(h,16777619)}return new Uint8Array([(h>>>24)&255,(h>>>16)&255,(h>>>8)&255,h&255])}
+
+function claimPayload(rec){const p=new Uint8Array(12);p.set(hexToBytes(rec.id),0);p[2]=rec.targetAddr;p[3]=Math.min(255,rec.parts.length);p[4]=Math.min(MAX_FRAMES_PER_LEASE,rec.parts.length);p[5]=stablePriority(rec.id)&255;return p}
+function scheduleClaim(rec){
+ if(!state.running||rec.status==='delivered')return;
+ rec.status='claiming';dbPut(rec);
+ const attempt=(state.claimRetries.get(rec.id)||0)+1;state.claimRetries.set(rec.id,attempt);
+ enqueue(frameItem({kind:`CLAIM ${rec.id}`,type:TYPES.CLAIM,dst:rec.targetAddr,payload:claimPayload(rec),priority:1,robust:true,dueAt:Date.now()+jitter(400,1300),meta:{onSent:()=>{
+  clearTimeout(state.claimTimers.get(rec.id));
+  const timer=setTimeout(()=>{
+   if(rec.targetAddr===BROADCAST){startReservedDelivery(rec);return}
+   if(rec.status!=='claiming')return;
+   if(attempt>=MAX_RETRY){rec.status='queued';dbPut(rec);log(`CLAIM ${rec.id} senza risposta · resta in coda`,'err');return}
+   const delay=Math.min(20000,1200*(2**attempt))+jitter(300,1500);
+   log(`CLAIM ${rec.id} non confermato · retry tra ${Math.round(delay/1000)}s`);
+   setTimeout(()=>scheduleClaim(rec),delay)
+  },CLAIM_WAIT_MS+1200);
+  state.claimTimers.set(rec.id,timer)
+ }}}))
+}
+function scheduleClaimAck(packet){
+ const p=new Uint8Array(12);p.set(packet.payload.slice(0,2),0);p[2]=1;p[3]=ownAddress();p[4]=Math.min(100,Math.round(state.rxPeak*120));
+ const delay=GUARD_MS+ownAddress()*420+jitter(120,520);
+ enqueue(frameItem({kind:'CLAIM_ACK',type:TYPES.CLAIM_ACK,dst:packet.src,payload:p,priority:0,urgent:true,robust:true,dueAt:Date.now()+delay,meta:{seq:packet.seq}}))
+}
+function startReservedDelivery(rec){
+ if(!rec||rec.status==='delivered'||rec.status==='sending')return;
+ clearTimeout(state.claimTimers.get(rec.id));state.claimTimers.delete(rec.id);
+ rec.status='reserving';dbPut(rec);
+ const allParts=rec.parts.map(fromB64url),remaining=allParts.map((p,i)=>({p,i})).filter(x=>!rec.acked.includes(x.i));
+ if(!remaining.length)return;
+ const batch=remaining.slice(0,MAX_FRAMES_PER_LEASE);
+ const seconds=clamp(Math.ceil((batch.length*(state.lastTxDuration+1100)+state.lastTxDuration)/1000),8,45);
+ const reserve=new Uint8Array(12);reserve.set(hexToBytes(rec.id),0);reserve[4]=batch.length;reserve[5]=rec.targetAddr;reserve[6]=seconds;reserve[7]=1;
+ enqueue(frameItem({kind:'RESERVE',type:TYPES.RESERVE,dst:rec.targetAddr,payload:reserve,priority:1,robust:true,d
