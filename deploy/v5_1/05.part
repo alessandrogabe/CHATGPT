@@ -1,0 +1,537 @@
+ement = 'failover coordinatore';
+      queueSync(state.epoch + 1, nextCycle, true);
+    }
+  }
+
+  // Il coordinatore attivo assegna una sola lease alla volta.
+  if (
+    !directMode() &&
+    activeCoordinator()?.id === state.id &&
+    now >= state.leaseUntil &&
+    state.pendingRequests.size
+  ) {
+    const requests = [...state.pendingRequests.values()]
+      .sort((a, b) => a.receivedAt - b.receivedAt);
+    const request = requests[0];
+    state.pendingRequests.delete(request.token);
+    queueGrant(request);
+  }
+
+  if (changed) {
+    state.coordinatorAgreement = 'roster modificato';
+    if (isCoordinator()) queueRosterExchange();
+    renderAll();
+  } else {
+    renderIdentity();
+    renderDevices();
+  }
+}
+
+function handleControl(packet) {
+  const firstSeen = touchDevice(packet.sender);
+  const {type, sender, body} = packet;
+
+  if (type === 'H') {
+    const length = fromB36(body[0]);
+    const name = body.slice(1, 1 + length) || sender;
+    touchDevice(sender, name);
+    if (firstSeen) queueIdentity(sender, false, true);
+    log(`RX identità rapida ${name} (${sender})`, 'ok');
+    renderAll();
+    return;
+  }
+
+  if (type === 'C') {
+    acceptSync({
+      sender,
+      epoch: fromB36(body.slice(0, 2)),
+      cycle: fromB36(body.slice(2, 4)),
+      count: fromB36(body[4]),
+      hash: body.slice(5, 9),
+      coordinatorCount: fromB36(body[9])
+    }, false);
+    return;
+  }
+
+  if (type === 'V') {
+    const leader = body.slice(0, 7);
+    const epoch = fromB36(body.slice(7, 9));
+    const cycle = fromB36(body.slice(9, 11));
+    const hash = body.slice(11, 15);
+    const status = body[15];
+
+    if (leader !== state.id || epoch !== state.epoch || cycle !== state.cycle) return;
+    state.lastConfirmAt = Date.now();
+
+    if (status === 'O' && hash === rosterHash()) {
+      state.coordinatorAgreement = `confermato da ${sender}`;
+      log(`RX conferma coordinatore da ${sender}`, 'ok');
+    } else {
+      state.coordinatorAgreement = `divergenza con ${sender}`;
+      log(`Roster divergente con coordinatore ${sender}`);
+      queueRosterExchange();
+    }
+    renderAll();
+    return;
+  }
+
+  if (type === 'P') {
+    const hash = body.slice(5, 9);
+
+    if (directMode()) {
+      const distance = state.nextDirectBeaconAt - Date.now();
+      if (distance > -1200 && distance < 2800) {
+        state.heartbeatBackoff = Math.min(
+          12000,
+          state.heartbeatBackoff + 1200 + cryptoFraction() * 3200
+        );
+        scheduleNextDirectHeartbeat();
+        log(`Heartbeat di ${sender}: fase locale spostata.`);
+      }
+    }
+
+    if (firstSeen) {
+      queueIdentityRequest(sender);
+      queueIdentity(sender, false, true);
+    }
+    if (!directMode() && isCoordinator() && hash !== rosterHash()) queueRosterExchange();
+    renderAll();
+    return;
+  }
+
+  if (type === 'J') {
+    if (onlineNodes().length >= MAX_NODES && !state.devices.has(sender)) {
+      log(`JOIN ignorato: rete piena (${sender})`, 'err');
+      return;
+    }
+    touchDevice(sender);
+    if (isCoordinator()) {
+      queueJoinAccept(sender);
+      queueIdentityRequest(sender);
+      queueIdentity(BROADCAST, false);
+    }
+    return;
+  }
+
+  if (type === 'Y') {
+    const target = body.slice(0, 7);
+    if (target !== state.id) return;
+    state.epoch = Math.max(state.epoch, fromB36(body.slice(7, 9)));
+    state.joined = true;
+    queueIdentity(BROADCAST, true);
+    showToast('Ingresso nella mesh confermato');
+    log(`JOIN accettato da coordinatore ${sender}`, 'ok');
+    return;
+  }
+
+  if (type === 'R') {
+    const target = body.slice(0, 7);
+    if (target === state.id || target === BROADCAST) queueIdentity(sender, false);
+    return;
+  }
+
+  if (type === 'Q') {
+    const coordinator = body.slice(0, 7);
+    const token = body.slice(7, 12);
+    const parts = fromB36(body[12]);
+    const profile = body[13] || 'L';
+
+    // Tutti i coordinatori memorizzano la richiesta; soltanto quello attivo concede.
+    if (isCoordinator()) {
+      state.pendingRequests.set(token, {
+        sender, token, parts, profile, receivedAt: Date.now()
+      });
+      log(`RX richiesta lease ${token} da ${sender} · coordinatori sincronizzati`);
+    }
+
+    if (coordinator !== activeCoordinator()?.id) {
+      state.coordinatorAgreement = 'richiesta riallineata al coordinatore attivo';
+    }
+    return;
+  }
+
+  if (type === 'G') {
+    const target = body.slice(0, 7);
+    const token = body.slice(7, 12);
+    const leaseSeconds = fromB36(body[12]);
+    const cycle = fromB36(body.slice(13, 15));
+
+    state.pendingRequests.delete(token);
+    state.activeLease = {
+      target, token, cycle,
+      until: Date.now() + leaseSeconds * 1000
+    };
+    state.leaseUntil = state.activeLease.until;
+
+    if (target === state.id) startGrantedTransmission(token);
+    return;
+  }
+
+  if (type === 'A') {
+    const target = body.slice(0, 7);
+    const token = body.slice(7, 12);
+    const part = fromB36(body[12]);
+    if (target !== state.id) return;
+
+    const key = `${token}:${part}`;
+    const pending = state.awaitingAck.get(key);
+    if (!pending) return;
+
+    clearTimeout(pending.timer);
+    state.awaitingAck.delete(key);
+    markChunkAcked(token, part);
+    log(`RX ACK ${token} parte ${part + 1}`, 'ok');
+  }
+}
+
+function handleShortControl(packet) {
+  const firstSeen = touchDevice(packet.sender);
+  const {type, sender, body} = packet;
+
+  if (type === 'I') {
+    const target = body.slice(0, 7);
+    if (target !== state.id && target !== BROADCAST) return;
+    const length = fromB36(body.slice(7, 9));
+    let name = sender;
+    try { name = b64ToText(body.slice(9, 9 + length)) || sender; } catch {}
+    touchDevice(sender, name);
+    if (firstSeen) queueIdentity(sender, false, true);
+    showToast(`${name} è disponibile`);
+    log(`RX identità ${name} (${sender})`, 'ok');
+    renderAll();
+    return;
+  }
+
+  if (type === 'L') {
+    const trustedCoordinator =
+      isCoordinator(sender) ||
+      sender === state.currentSyncSender ||
+      sender === backupCoordinator()?.id;
+    if (!trustedCoordinator) return;
+    const epoch = fromB36(body.slice(0, 2));
+    const cycle = fromB36(body.slice(2, 4));
+    const count = fromB36(body[4]);
+    const ids = [];
+    for (let index = 0; index < count; index++) {
+      const id = body.slice(5 + index * 7, 12 + index * 7);
+      if (id.length === 7) ids.push(id);
+    }
+
+    let added = false;
+    for (const id of ids) {
+      if (id === state.id || state.devices.has(id)) continue;
+      if (onlineNodes().length >= MAX_NODES) break;
+      touchDevice(id);
+      queueIdentityRequest(id);
+      added = true;
+    }
+
+    if (added || rosterHash(ids.sort()) !== rosterHash()) {
+      state.epoch = Math.max(state.epoch, epoch);
+      state.coordinatorAgreement = `roster unito con ${sender}`;
+      log(`RX roster coordinatore ${sender}: ${ids.join(' > ')}`);
+      if (isCoordinator()) queueRosterExchange();
+    } else {
+      state.coordinatorAgreement = `roster concorde con ${sender}`;
+    }
+    renderAll();
+  }
+}
+
+function handleData(packet) {
+  const {sender, target, token, part, total, text} = packet;
+  if (target !== state.id && target !== BROADCAST) return;
+
+  const firstSeen = touchDevice(sender);
+  if (firstSeen) queueIdentity(sender, false, true);
+  if (target === state.id) queueAck(sender, token, part);
+
+  const key = `${sender}:${token}`;
+  let assembly = state.assemblies.get(key);
+  if (!assembly) {
+    assembly = {
+      sender, target, token, total,
+      parts: Array(total), ts: Date.now()
+    };
+    state.assemblies.set(key, assembly);
+  }
+
+  if (assembly.total !== total || part >= total) return;
+  assembly.parts[part] = text;
+  assembly.ts = Date.now();
+
+  if (assembly.parts.filter(value => value !== undefined).length !== total) return;
+
+  state.assemblies.delete(key);
+  const seenKey = `${sender}:${token}`;
+  if (state.seenMessages.has(seenKey) || findMessage(token)) return;
+  state.seenMessages.add(seenKey);
+
+  const device = state.devices.get(sender);
+  const peer = target === BROADCAST ? BROADCAST : sender;
+  history(peer).push({
+    id: token, from: sender, fromName: device?.name || sender,
+    to: target, text: assembly.parts.join(''),
+    ts: Date.now(), direction: 'in', status: 'received'
+  });
+  trimHistory(peer);
+
+  if (state.selected !== peer) state.unread[peer] = (state.unread[peer] || 0) + 1;
+  persist();
+  renderAll();
+  showToast(`Messaggio da ${device?.name || sender}`);
+  log(`RX messaggio ${token} completo (${total} parti)`, 'ok');
+}
+
+function buildMessageParts(text) {
+  const chunks = splitUtf8(text, LONG_UTF8_BYTES);
+  return chunks.map(chunk => {
+    const bytes = new TextEncoder().encode(chunk).length;
+    const short = bytes <= SHORT_UTF8_BYTES;
+    return {
+      text: chunk,
+      channel: short ? 'short' : 'long',
+      size: short ? SHORT_SIZE : LONG_SIZE,
+      type: short ? 'S' : 'M'
+    };
+  });
+}
+function sendCurrent() {
+  const text = els.messageInput.value.trim();
+  if (!text || !state.running) return;
+
+  const target = state.selected;
+  if (target !== BROADCAST && !state.devices.has(target)) {
+    showToast('Il dispositivo non è disponibile');
+    return;
+  }
+
+  const parts = buildMessageParts(text);
+  if (parts.length > 35) {
+    showToast('Messaggio troppo lungo per la rete acustica');
+    return;
+  }
+
+  const token = tokenId();
+  const profile = parts.some(part => part.channel === 'long') ? 'L' : 'S';
+  const outgoing = {
+    token, target, text, parts, profile,
+    status: 'waiting', requestCycle: -1,
+    createdAt: Date.now()
+  };
+  state.outgoing.set(token, outgoing);
+  queueDbPut(outgoing);
+
+  history(target).push({
+    id: token, from: state.id, fromName: state.name, to: target,
+    text, ts: Date.now(), direction: 'out', status: 'queued',
+    total: parts.length, acked: [], sentParts: []
+  });
+  trimHistory(target);
+  persist();
+
+  els.messageInput.value = '';
+  autoGrow();
+  renderConversation();
+  if (directMode()) {
+    const leaseSeconds = Math.min(35, Math.max(
+      profile === 'S' ? 12 : 17,
+      (profile === 'S' ? 9 : 12) + parts.length * (profile === 'S' ? 3 : 5)
+    ));
+    state.activeLease = {
+      target: state.id, token, cycle: Math.max(0, state.cycle),
+      until: Date.now() + leaseSeconds * 1000
+    };
+    state.leaseUntil = state.activeLease.until;
+    showToast('Invio diretto avviato');
+    startGrantedTransmission(token);
+    return;
+  }
+
+  showToast('Messaggio in attesa dello slot coordinato');
+
+  // Un coordinatore attivo può registrare localmente la propria richiesta.
+  if (activeCoordinator()?.id === state.id && Date.now() >= state.leaseUntil) {
+    state.pendingRequests.set(token, {
+      sender: state.id, token, parts: parts.length,
+      profile, receivedAt: Date.now()
+    });
+  }
+}
+function startGrantedTransmission(token) {
+  const outgoing = state.outgoing.get(token);
+  if (!outgoing || outgoing.status === 'sending' || outgoing.status === 'delivered') return;
+
+  removeQueuedTransmissionItems(token);
+  outgoing.status = 'sending';
+  outgoing.requestCycle = -1;
+  outgoing.acked = Array.isArray(outgoing.acked) ? outgoing.acked : [];
+
+  const message = findMessage(token);
+  const acknowledged = new Set([
+    ...(outgoing.acked || []),
+    ...(message?.acked || [])
+  ]);
+
+  updateMessageStatus(token, 'granted');
+  queueDbPut(outgoing);
+
+  let queued = 0;
+  outgoing.parts.forEach((part, index) => {
+    if (acknowledged.has(index)) return;
+    queued++;
+
+    queuePacket({
+      kind: part.channel === 'short' ? 'testo breve' : 'testo',
+      channel: part.channel,
+      payload: packData(
+        part.type, outgoing.target, token, index,
+        outgoing.parts.length, part.text, part.size
+      ),
+      priority: 1,
+      dueAt: Date.now() + 260 + queued * 220,
+      messageId: token,
+      part: index,
+      total: outgoing.parts.length,
+      requiresAck: outgoing.target !== BROADCAST
+    });
+  });
+
+  if (!queued) {
+    outgoing.status = 'delivered';
+    updateMessageStatus(token, 'delivered');
+    queueDbDelete(token);
+  }
+}
+function findMessage(id) {
+  for (const list of Object.values(state.histories)) {
+    const found = list.find(message => message.id === id);
+    if (found) return found;
+  }
+  return null;
+}
+function markChunkAcked(id, part) {
+  const message = findMessage(id);
+  if (!message) return;
+  message.acked ||= [];
+  if (!message.acked.includes(part)) message.acked.push(part);
+  message.status = message.acked.length >= message.total ? 'delivered' : 'transmitting';
+
+  const outgoing = state.outgoing.get(id);
+  if (outgoing) {
+    outgoing.acked = [...new Set([...(outgoing.acked || []), part])];
+    outgoing.status = message.status === 'delivered' ? 'delivered' : 'sending';
+
+    if (message.status === 'delivered') {
+      state.outgoing.delete(id);
+      queueDbDelete(id);
+    } else {
+      queueDbPut(outgoing);
+    }
+  }
+
+  persist();
+  renderConversation();
+
+  // Consegna il messaggio successivo allo stesso contatto, se presente.
+  if (message.status === 'delivered') {
+    setTimeout(() => resumePendingForPeer(message.to), 700);
+  }
+}
+function markBroadcastPartSent(id, part) {
+  const message = findMessage(id);
+  if (!message) return;
+  message.sentParts ||= [];
+  if (!message.sentParts.includes(part)) message.sentParts.push(part);
+  if (message.sentParts.length >= message.total) {
+    message.status = 'delivered';
+    state.outgoing.delete(id);
+    queueDbDelete(id);
+  }
+  persist();
+  renderConversation();
+}
+function updateMessageStatus(id, status) {
+  const message = findMessage(id);
+  if (!message) return;
+  if (message.status === 'delivered' && status !== 'delivered') return;
+
+  message.status = status;
+  const outgoing = state.outgoing.get(id);
+  if (outgoing) {
+    outgoing.status = status === 'queued' ? 'waiting' : status;
+    if (status === 'delivered') {
+      state.outgoing.delete(id);
+      queueDbDelete(id);
+    } else {
+      queueDbPut(outgoing);
+    }
+  }
+
+  persist();
+  renderConversation();
+}
+function saveIdentity() {
+  const name = els.nameInput.value.trim();
+  const room = els.roomInput.value.trim() || 'LOCALE';
+  if (!name) {
+    showToast('Inserisci un nome');
+    return;
+  }
+
+  const roomChanged = state.room !== room;
+  state.name = name.slice(0, 20);
+  state.room = room.slice(0, 12);
+  persist();
+
+  if (roomChanged) {
+    state.devices.clear();
+    state.selected = BROADCAST;
+    state.joined = false;
+    state.epoch = 0;
+    state.cycle = -1;
+    state.lastSyncAt = 0;
+    state.txQueue = [];
+    showToast('Canale cambiato: mesh azzerata');
+  }
+
+  if (state.running) queueIdentity(BROADCAST, true);
+  renderAll();
+}
+function autoGrow() {
+  els.messageInput.style.height = 'auto';
+  els.messageInput.style.height = Math.min(120, els.messageInput.scrollHeight) + 'px';
+}
+
+els.startBtn.onclick = startNetwork;
+els.announceBtn.onclick = () => {
+  if (!directMode() && !state.joined) queueJoin();
+  announceBurst();
+  showToast('Tre presentazioni programmate');
+};
+els.saveIdentity.onclick = saveIdentity;
+els.sendBtn.onclick = sendCurrent;
+els.messageInput.addEventListener('input', autoGrow);
+els.messageInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendCurrent();
+  }
+});
+els.openSidebar.onclick = () => els.sidebar.classList.add('open');
+els.closeSidebar.onclick = () => els.sidebar.classList.remove('open');
+els.settingsBtn.onclick = () => els.settingsOverlay.classList.add('open');
+els.hierarchyBtn.onclick = () => {
+  renderHierarchy();
+  els.hierarchyOverlay.classList.add('open');
+};
+els.guideBtn.onclick = () => els.guideOverlay.classList.add('open');
+$$('.modalClose').forEach(button => button.onclick = closeOverlays);
+$$('.overlay').forEach(overlay => overlay.addEventListener('click', event => {
+  if (event.target === overlay) closeOverlays();
+}));
+els.showLogToggle.onchange = () => setLogVisibility(els.showLogToggle.checked);
+els.copyLogBtn.onclick = copyLogToClipboard;
+els.clearLogBtn.onclick = clearLogPanel;
+els.activateSpeakerBtn.onclick = async () => {
+  if (!state.context) {
