@@ -7,34 +7,27 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>AudioMesh 6.5 — caricamento</title>
-<style>
-html,body{margin:0;height:100%;background:#071116;color:#edf7f8;font-family:system-ui,-apple-system,sans-serif}body{display:grid;place-items:center}.box{text-align:center;padding:24px}.spin{width:38px;height:38px;margin:0 auto 16px;border:4px solid #20343e;border-top-color:#20d7a5;border-radius:50%;animation:r .8s linear infinite}@keyframes r{to{transform:rotate(360deg)}}small{color:#91a8b1;display:block;margin-top:7px}
-</style>
+<title>AudioMesh 7.0.1 — caricamento</title>
+<style>html,body{margin:0;height:100%;background:#071116;color:#edf7f8;font-family:system-ui,-apple-system,sans-serif}body{display:grid;place-items:center}.box{text-align:center;padding:24px}.spin{width:38px;height:38px;margin:0 auto 16px;border:4px solid #20343e;border-top-color:#20d7a5;border-radius:50%;animation:r .8s linear infinite}@keyframes r{to{transform:rotate(360deg)}}small{color:#91a8b1;display:block;margin-top:7px}</style>
 </head>
 <body>
-<div class="box"><div class="spin"></div><b>AudioMesh 6.5</b><small id="status">Caricamento recovery e fusione rete…</small></div>
+<div class="box"><div class="spin"></div><b>AudioMesh 7.0.1</b><small id="status">Caricamento protocollo tonale distribuito…</small></div>
 <script>
 (async()=>{
-  const status=document.getElementById('status');
-  try{
-    const paths=Array.from({length:5},(_,i)=>`deploy/v6_5_recovery/${String(i).padStart(2,'0')}.part?v=650`);
-    const parts=[];
-    for(const path of paths){
-      const response=await fetch(path,{cache:'no-store'});
-      if(!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
-      parts.push(await response.text());
-    }
-    const binary=atob(parts.join('').trim());
-    const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
-    if(typeof DecompressionStream!=='function') throw new Error('DecompressionStream non supportato');
-    const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-    const app=await new Response(stream).text();
-    if(!app.startsWith('<!doctype html>')) throw new Error('Inizio applicazione non valido');
-    if(!app.includes("const VERSION='6.5.0-recovery-generation-merge'")) throw new Error('Versione incompleta o errata');
-    if(!app.trimEnd().endsWith('</html>')) throw new Error('Applicazione troncata');
-    document.open();document.write(app);document.close();
-  }catch(error){status.textContent='Errore di caricamento: '+error.message;console.error(error)}
+ const status=document.getElementById('status');
+ try{
+  const paths=Array.from({length:5},(_,i)=>`deploy/v7_0_1/${String(i).padStart(2,'0')}.part?v=701`);
+  const parts=[];
+  for(const path of paths){const response=await fetch(path,{cache:'no-store'});if(!response.ok)throw new Error(`${path}: HTTP ${response.status}`);parts.push(await response.text())}
+  const binary=atob(parts.join('').trim()),bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
+  if(typeof DecompressionStream!=='function')throw new Error('DecompressionStream non supportato');
+  const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  const app=await new Response(stream).text();
+  if(!app.startsWith('<!doctype html>'))throw new Error('Applicazione non valida');
+  if(!app.includes("const VERSION='7.0.1-distributed-tone-access'"))throw new Error('Versione incompleta');
+  if(!app.trimEnd().endsWith('</html>'))throw new Error('Applicazione troncata');
+  document.open();document.write(app);document.close();
+ }catch(error){status.textContent='Errore di caricamento: '+error.message;console.error(error)}
 })();
 </script>
 </body>
