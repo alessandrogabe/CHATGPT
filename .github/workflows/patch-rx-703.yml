@@ -1,0 +1,135 @@
+name: Patch AudioMesh RX 7.0.3
+
+on:
+  push:
+    paths:
+      - .github/workflows/patch-rx-703.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply RX diagnostic fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess
+
+          p = Path('index.html')
+          h = p.read_text(encoding='utf-8')
+          h = h.replace('AudioMesh 7.0.2 — Mobile Drawer Fix','AudioMesh 7.0.3 — RX Diagnostic Fix')
+          h = h.replace("const VERSION='7.0.2-mobile-drawer-fix'","const VERSION='7.0.3-rx-diagnostic-fix'")
+
+          h = h.replace(
+          ''' <div class="box"><div class="tone" id="signature">firma —</div><div class="sub">Il tono identifica localmente il nodo. Le pulsazioni prenotano, confermano e chiudono il turno.</div></div>''',
+          ''' <div class="box">
+            <div class="tone" id="signature">firma —</div>
+            <div class="sub">Il tono identifica localmente il nodo. Le pulsazioni prenotano, confermano e chiudono il turno.</div>
+            <div class="row"><span class="badge" id="micBadge">MIC —</span><span class="badge" id="rxBadge">RX —</span></div>
+            <div class="tone" id="rxDiag">livello — · picchi —</div>
+            <button class="btn secondary" id="testTone" disabled>Test tono continuo</button>
+           </div>''')
+
+          h = h.replace(
+          "drawerClose:$('#drawerClose'),drawerOverlay:$('#drawerOverlay')}",
+          "drawerClose:$('#drawerClose'),drawerOverlay:$('#drawerOverlay'),micBadge:$('#micBadge'),rxBadge:$('#rxBadge'),rxDiag:$('#rxDiag'),testTone:$('#testTone')}")
+          h = h.replace(
+          'pending:null,provider:null,lastActivity:0,key:null}',
+          'pending:null,provider:null,lastActivity:0,key:null,lastAudioCallback:0,rxPeakDb:-120,rxCandidate:null,rxCandidateAt:0,rxFrameErrors:0,testSource:null}')
+
+          old = '''function toneLevel(sig){if(!S.an)return -120;const [a,b]=sigFreq(sig),hz=S.ctx.sampleRate/S.an.fftSize;const va=S.data[Math.round(a/hz)]||-120,vb=S.data[Math.round(b/hz)]||-120;return Math.min(va,vb)}
+          function occupied(sig){return toneLevel(sig)>S.noiseFloor+14}'''
+          new = '''function bandPeak(freq,width=48){
+           if(!S.an||!S.data||!S.ctx)return -120;
+           const hz=S.ctx.sampleRate/S.an.fftSize;
+           const lo=Math.max(0,Math.floor((freq-width)/hz)),hi=Math.min(S.data.length-1,Math.ceil((freq+width)/hz));
+           let best=-120;for(let i=lo;i<=hi;i++)best=Math.max(best,S.data[i]||-120);return best;
+          }
+          function localBandFloor(freq,width=150){
+           if(!S.an||!S.data||!S.ctx)return S.noiseFloor;
+           const hz=S.ctx.sampleRate/S.an.fftSize;
+           const lo=Math.max(0,Math.floor((freq-width)/hz)),hi=Math.min(S.data.length-1,Math.ceil((freq+width)/hz));
+           const vals=[];for(let i=lo;i<=hi;i++)vals.push(S.data[i]||-120);vals.sort((a,b)=>a-b);return vals[Math.floor(vals.length*.55)]??S.noiseFloor;
+          }
+          function toneMetrics(sig){
+           const [f1,f2]=sigFreq(sig),a=bandPeak(f1),b=bandPeak(f2),fa=localBandFloor(f1),fb=localBandFloor(f2);
+           const sa=a-fa,sb=b-fb;return {a,b,fa,fb,sa,sb,score:Math.min(sa,sb),strong:Math.max(sa,sb),present:(sa>9&&sb>6)||(sb>9&&sa>6)};
+          }
+          function toneLevel(sig){return toneMetrics(sig).score}
+          function occupied(sig){return toneMetrics(sig).present}'''
+          if old not in h: raise SystemExit('tone detector block not found')
+          h = h.replace(old,new,1)
+
+          helpers = '''function rxSnapshot(){
+           if(!S.running||!S.an)return {best:null,bestScore:-99,peaks:[]};
+           const found=[];for(let sig=0;sig<FCOUNT;sig++){const m=toneMetrics(sig);if(m.strong>5)found.push({sig,...m})}
+           found.sort((a,b)=>b.score-a.score);return {best:found[0]||null,bestScore:found[0]?.score??-99,peaks:found.slice(0,4)};
+          }
+          function updateRxDiagnostics(){
+           if(!els.micBadge)return;const age=S.lastAudioCallback?Date.now()-S.lastAudioCallback:Infinity;
+           const ctx=S.ctx?.state||'—',track=S.stream?.getAudioTracks?.()[0],live=!!track&&track.readyState==='live'&&!track.muted&&age<1800;
+           els.micBadge.textContent=live?`MIC vivo ${ctx}`:`MIC fermo ${ctx}`;els.micBadge.className='badge '+(live?'ok':'warn');
+           const snap=rxSnapshot(),best=snap.best;els.rxBadge.textContent=best?`RX firma ${best.sig}`:'RX ascolto';els.rxBadge.className='badge '+(best?.present?'ok':'');
+           els.rxDiag.textContent=`callback ${Number.isFinite(age)?Math.round(age)+' ms':'—'} · picco ${S.rxPeakDb.toFixed(1)} dB · ${snap.peaks.map(x=>`${x.sig}:${x.score.toFixed(1)}`).join(' ')||'nessuna firma'}`;
+           els.testTone.disabled=!S.running||!S.calibrated;
+          }
+          '''
+          h = h.replace('function render(){',helpers+'function render(){updateRxDiagnostics();',1)
+
+          m = re.search(r'function decodeTick\(\)\{.*?\}\nfunction handleTone',h,re.S)
+          if not m: raise SystemExit('decodeTick not found')
+          dec = '''function decodeTick(){
+           if(!S.running||S.tx)return;const snap=rxSnapshot();
+           if(snap.best?.present){if(S.rxCandidate!==snap.best.sig){S.rxCandidate=snap.best.sig;S.rxCandidateAt=Date.now();log(`RX firma candidata ${snap.best.sig} · score ${snap.best.score.toFixed(1)} dB`)}}
+           else if(Date.now()-S.rxCandidateAt>500)S.rxCandidate=null;
+           for(let sig=0;sig<FCOUNT;sig++){
+            let d=S.decoders.get(sig);if(!d)d={samples:[],count:0,phases:Array.from({length:4},()=>[])};
+            d.samples.push(occupied(sig)?1:0);if(d.samples.length>4)d.samples.shift();d.count++;
+            if(d.samples.length===4){for(let phase=0;phase<4;phase++){if(d.count%4!==phase)continue;const bit=d.samples.reduce((a,b)=>a+b,0)>=2?1:0,q=d.phases[phase];q.push(bit);if(q.length>FRAME_BITS)q.shift();if(q.length===FRAME_BITS){const packet=parseFrame(q);if(packet&&packet.src===sig){d.phases=Array.from({length:4},()=>[]);handleTone(packet);break}if(PRE.every((b,i)=>q[i]===b))S.rxFrameErrors++}}}
+            S.decoders.set(sig,d)
+           }
+          }
+          function handleTone'''
+          h = h[:m.start()] + dec + h[m.end():]
+
+          h = h.replace('async function onAudio(e){if(!S.running)return;const input=e.inputBuffer.getChannelData(0);',
+          "async function onAudio(e){if(!S.running)return;S.lastAudioCallback=Date.now();const input=e.inputBuffer.getChannelData(0);let peak=0;for(const v of input)peak=Math.max(peak,Math.abs(v));S.rxPeakDb=peak>0?20*Math.log10(peak):-120;")
+          h = h.replace('S.running=true;S.signature=candidate();S.noise=[];S.calibrated=false;',
+          'S.running=true;S.signature=candidate();S.noise=[];S.calibrated=false;S.lastAudioCallback=Date.now();S.rxPeakDb=-120;S.rxCandidate=null;S.rxFrameErrors=0;')
+
+          extra = '''async function playTestTone(){
+           if(!S.running||!S.calibrated)return;
+           if(S.testSource){try{S.testSource.stop()}catch{}S.testSource=null;els.testTone.textContent='Test tono continuo';return}
+           await S.ctx.resume();const [f1,f2]=sigFreq(S.signature),gain=S.ctx.createGain();gain.gain.value=.12;gain.connect(S.ctx.destination);
+           const oscs=[f1,f2].map(f=>{const o=S.ctx.createOscillator();o.frequency.value=f;o.connect(gain);o.start();return o});
+           S.testSource={stop(){oscs.forEach(o=>{try{o.stop()}catch{}});gain.disconnect()}};els.testTone.textContent='Ferma tono test';log(`TEST tono continuo firma ${S.signature} · ${f1}+${f2} Hz`);
+          }
+          async function watchdog(){
+           if(!S.running)return;const age=Date.now()-S.lastAudioCallback;if(S.ctx?.state!=='running'){try{await S.ctx.resume();log('AudioContext riattivato dal watchdog')}catch{}}
+           if(age>2500)log(`RX bloccato · nessuna callback da ${Math.round(age/1000)}s`,'warn');updateRxDiagnostics();
+          }
+          '''
+          h = h.replace('function stop(){',extra+'function stop(){',1)
+          h = h.replace('function stop(){S.running=false;clearInterval(S.tick);',"function stop(){S.running=false;clearInterval(S.tick);clearInterval(S.watch);if(S.testSource){try{S.testSource.stop()}catch{}S.testSource=null}",1)
+          h = h.replace('S.tick=setInterval(()=>{if(S.an){S.an.getFloatFrequencyData(S.data);decodeTick()}render()},TICK_MS);',
+          'S.tick=setInterval(()=>{if(S.an){S.an.getFloatFrequencyData(S.data);decodeTick()}render()},TICK_MS);S.watch=setInterval(watchdog,1000);',1)
+          h = h.replace('els.start.onclick=start;els.join.onclick=requestJoin;', 'els.start.onclick=start;els.testTone.onclick=playTestTone;els.join.onclick=requestJoin;',1)
+
+          p.write_text(h,encoding='utf-8')
+          script=re.search(r'<script>\s*(.*?)\s*</script>',h,re.S)
+          Path('/tmp/am703.js').write_text(script.group(1),encoding='utf-8')
+          subprocess.run(['node','--check','/tmp/am703.js'],check=True)
+          PY
+      - name: Commit updated page
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Fix AudioMesh RX tone detection and diagnostics"
+          git push
