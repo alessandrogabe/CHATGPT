@@ -1,0 +1,19 @@
+{
+  "name": "AudioChat v10 — mesh acustica protetta",
+  "short_name": "AudioChat",
+  "description": "Chat testuale locale che comunica attraverso suono.",
+  "lang": "it",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#f3f5f1",
+  "theme_color": "#0c4d40",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

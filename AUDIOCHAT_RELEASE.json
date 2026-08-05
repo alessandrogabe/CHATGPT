@@ -1,0 +1,13 @@
+{
+  "version": "10-fast-file-transfer",
+  "sites_source_commit": "fa30e814c67ff92ecf8c02be475276d60e117c70",
+  "sites_url": "https://audiochat-mesh.alegabe81.chatgpt.site/",
+  "runtime_files": {
+    "index.html": "sha256:c12949f96fd222ea5598b94144e637266780f379b3d14a28c64d026e44e81abe",
+    "assets/index-BfSBzTBW.js": "sha256:300b42e85287bfe14dd096f9bf92f8e9955654d0a7a89ced097ccc64e05d6e02",
+    "assets/index-DrFX_olX.css": "sha256:6e1bb3b200f2a0d7a61ecd35cf512b03b616bec5fddadf071ae75fe57094e10d",
+    "assets/ggwave-Bm-vtoCk.js": "sha256:dcbd1e3c4bf61c78f352f66bc4bf53dc3c2b5588ff89c91e94fa867bf2a58f9d",
+    "manifest.webmanifest": "sha256:b35b4f16bcdc8c564a7f041d3ffdfbe3569e9e0771f4a89a422408a215c74f6f",
+    "favicon.svg": "sha256:64e912130ea4af63a9d4c292c11c69a372bf528f5d12c3df76e6381331e87547"
+  }
+}

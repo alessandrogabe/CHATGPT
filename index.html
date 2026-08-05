@@ -1,161 +1,19 @@
 <!doctype html>
 <html lang="it">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#071116">
-<meta http-equiv="Cache-Control" content="no-cache,no-store,must-revalidate">
-<title>AudioMesh 7.0.3 — RX Diagnostic Fix</title>
-<style>
-:root{--bg:#071116;--panel:#101d24;--panel2:#17272f;--line:#28404a;--text:#edf7f8;--muted:#91a8b1;--accent:#20d7a5;--warn:#ffc35a;--bad:#ff7078}
-*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif}
-body{overflow:hidden}button,input{font:inherit}.app{height:100dvh;display:grid;grid-template-columns:320px 1fr}.side{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0}.brand{padding:15px;border-bottom:1px solid var(--line)}h1{font-size:18px;margin:0}.sub{font-size:11px;color:var(--muted);margin-top:4px}.box{padding:13px;border-bottom:1px solid var(--line);display:grid;gap:9px}.field{width:100%;background:#08151b;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px}.btn{border:0;border-radius:10px;padding:10px 12px;font-weight:800;background:var(--accent);color:#032a22}.btn.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--line)}.btn:disabled{opacity:.4}.row{display:flex;gap:8px}.row>*{flex:1}.badge{display:inline-flex;padding:5px 8px;border-radius:99px;border:1px solid var(--line);font-size:11px;color:var(--muted)}.badge.ok{color:var(--accent)}.badge.warn{color:var(--warn)}.nodes{overflow:auto;flex:1;padding:8px}.node{padding:10px;margin:4px 0;border-radius:12px;background:var(--panel2);display:flex;justify-content:space-between;gap:8px}.main{display:grid;grid-template-rows:auto 1fr auto;min-width:0}.top{padding:13px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px;align-items:center}.messages{padding:18px;overflow:auto;background:radial-gradient(circle at 80% 10%,#102a30,transparent 38%)}.bubble{max-width:74%;padding:10px 12px;border-radius:14px;background:var(--panel2);margin:7px 0}.bubble.mine{margin-left:auto;background:#075448}.meta{font-size:10px;color:var(--muted);margin-top:5px}.composer{padding:12px;border-top:1px solid var(--line);display:flex;gap:8px}.composer input{flex:1}.log{height:150px;overflow:auto;background:#061015;border-top:1px solid var(--line);padding:9px;font:11px ui-monospace,monospace;color:#a8c0c8}.cal{height:8px;background:#21343d;border-radius:10px;overflow:hidden}.cal>span{display:block;height:100%;background:var(--accent);width:0}.tone{font:12px ui-monospace,monospace;color:#8ddfc8}.empty{color:var(--muted);padding:30px;text-align:center}
-@media(max-width:760px){
-.app{grid-template-columns:1fr}
-.side{position:fixed;inset:0 15% 0 0;z-index:30;transform:translateX(-105%);transition:transform .22s ease;box-shadow:14px 0 45px rgba(0,0,0,.42)}
-.side.open{transform:none}.menu{display:block!important}.drawer-close{display:grid!important}.drawer-overlay{display:block}.drawer-overlay.open{opacity:1;pointer-events:auto}.bubble{max-width:88%}}
-.menu{display:none}.drawer-close{display:none;place-items:center;width:38px;height:38px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--text);font-size:20px}
-.drawer-overlay{display:none;position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.48);opacity:0;pointer-events:none;transition:opacity .22s ease}
-</style>
-</head>
-<body>
-<div class="drawer-overlay" id="drawerOverlay" aria-hidden="true"></div>
-<div class="app">
-<aside class="side" id="side">
- <div class="brand"><div><h1>AudioMesh 7.0</h1><div class="sub">Distributed Tone Access · personal use free</div></div><button class="drawer-close" id="drawerClose" aria-label="Chiudi menu">✕</button></div>
- <div class="box">
-  <input class="field" id="name" placeholder="Nome dispositivo">
-  <input class="field" id="network" placeholder="Nome rete">
-  <input class="field" id="password" type="password" placeholder="Password rete">
-  <div class="cal"><span id="calBar"></span></div>
-  <div class="row"><span class="badge warn" id="calBadge">calibrazione 0%</span><span class="badge" id="stateBadge">spento</span></div>
-  <div class="row"><button class="btn" id="start">Avvia</button><button class="btn secondary" id="join" disabled>Join</button></div>
- </div>
- <div class="box">
-  <div class="tone" id="signature">firma —</div>
-  <div class="sub">Il tono identifica localmente il nodo. Le pulsazioni prenotano, confermano e chiudono il turno.</div>
-  <div class="row"><span class="badge" id="micBadge">MIC —</span><span class="badge" id="rxBadge">RX —</span></div>
-  <div class="tone" id="rxDiag">livello — · picchi —</div>
-  <button class="btn secondary" id="testTone" disabled>Test tono continuo</button>
- </div>
- <div class="nodes" id="nodes"></div>
-</aside>
-<main class="main">
- <header class="top"><button class="btn secondary menu" id="menu">☰</button><div><b id="chatTitle">Tutta la rete</b><div class="sub" id="chatSub">canale normalmente silenzioso</div></div><span class="badge" id="channel">libero</span></header>
- <section class="messages" id="messages"><div class="empty">Avvia due dispositivi con la stessa rete. Dopo la calibrazione passiva, premi Join su uno dei due.</div></section>
- <div><div class="composer"><input class="field" id="text" placeholder="Messaggio"><button class="btn" id="send" disabled>Invia</button></div><div class="log" id="log"></div></div>
-</main>
-</div>
-<script>
-(()=>{'use strict';
-const VERSION='7.0.3-rx-diagnostic-fix';
-const TYPE={JOIN:1,PROVIDER:2,JOIN_OK:3,REQUEST:4,GRANT:5,ACK:6,COLLISION:7,ALIVE:0};
-const TYPE_NAME=Object.fromEntries(Object.entries(TYPE).map(([k,v])=>[v,k]));
-const SLOT_MS=80, TICK_MS=20, PRE=[1,0,1,1,0,1], FRAME_BITS=PRE.length+3+4+4+3+3+4;
-const FCOUNT=16,FBASE=1050,FSTEP=95,FHIGH=3350;
-const $=s=>document.querySelector(s), te=new TextEncoder(), td=new TextDecoder();
-const els={name:$('#name'),network:$('#network'),password:$('#password'),start:$('#start'),join:$('#join'),send:$('#send'),text:$('#text'),log:$('#log'),nodes:$('#nodes'),messages:$('#messages'),calBar:$('#calBar'),calBadge:$('#calBadge'),stateBadge:$('#stateBadge'),signature:$('#signature'),channel:$('#channel'),chatTitle:$('#chatTitle'),chatSub:$('#chatSub'),side:$('#side'),menu:$('#menu'),drawerClose:$('#drawerClose'),drawerOverlay:$('#drawerOverlay'),micBadge:$('#micBadge'),rxBadge:$('#rxBadge'),rxDiag:$('#rxDiag'),testTone:$('#testTone')};
-const saved=JSON.parse(localStorage.getItem('am7')||'{}');els.name.value=saved.name||'';els.network.value=saved.network||'LOCALE';
-const S={running:false,calibrated:false,state:'OFF',ctx:null,stream:null,src:null,an:null,data:null,noise:[],noiseFloor:-90,signature:0,nodeId:saved.nodeId||crypto.randomUUID().replaceAll('-','').slice(0,12),nodes:new Map(),selected:15,nonce:0,busyUntil:0,tx:false,decoders:new Map(),gg:null,modem:null,out:null,pending:null,provider:null,lastActivity:0,key:null,lastAudioCallback:0,rxPeakDb:-120,rxCandidate:null,rxCandidateAt:0,rxFrameErrors:0,testSource:null};
-function save(){localStorage.setItem('am7',JSON.stringify({name:els.name.value,network:els.network.value,nodeId:S.nodeId}))}
-function log(s,c=''){const d=new Date().toLocaleTimeString();els.log.innerHTML+=`<div class="${c}">[${d}] ${s}</div>`;els.log.scrollTop=els.log.scrollHeight}
-function setState(x){S.state=x;els.stateBadge.textContent=x;render()}
-function crc4(bits){let c=0x9;for(const b of bits)c=((c<<1)^((c>>3)&1?0x3:0)^b)&15;return c}
-function bits(v,n){return Array.from({length:n},(_,i)=>(v>>(n-1-i))&1)}
-function number(a){return a.reduce((v,b)=>(v<<1)|b,0)}
-function frame(type,src,dst,nonce,flags=0){const core=[...bits(type,3),...bits(src,4),...bits(dst,4),...bits(nonce,3),...bits(flags,3)];return [...PRE,...core,...bits(crc4(core),4)]}
-function parseFrame(a){if(a.length!==FRAME_BITS||PRE.some((b,i)=>a[i]!==b))return null;const core=a.slice(PRE.length,-4);if(crc4(core)!==number(a.slice(-4)))return null;return{type:number(core.slice(0,3)),src:number(core.slice(3,7)),dst:number(core.slice(7,11)),nonce:number(core.slice(11,14)),flags:number(core.slice(14,17))}}
-function sigFreq(i){return [FBASE+i*FSTEP,FHIGH-i*FSTEP]}
-function hashSig(){let h=2166136261;for(const c of S.nodeId){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0)%FCOUNT}
-function candidate(offset=0){return(hashSig()+offset*5)%FCOUNT}
-function bandPeak(freq,width=48){
- if(!S.an||!S.data||!S.ctx)return -120;
- const hz=S.ctx.sampleRate/S.an.fftSize;
- const lo=Math.max(0,Math.floor((freq-width)/hz)),hi=Math.min(S.data.length-1,Math.ceil((freq+width)/hz));
- let best=-120;for(let i=lo;i<=hi;i++)best=Math.max(best,S.data[i]||-120);return best;
-}
-function localBandFloor(freq,width=150){
- if(!S.an||!S.data||!S.ctx)return S.noiseFloor;
- const hz=S.ctx.sampleRate/S.an.fftSize;
- const lo=Math.max(0,Math.floor((freq-width)/hz)),hi=Math.min(S.data.length-1,Math.ceil((freq+width)/hz));
- const vals=[];for(let i=lo;i<=hi;i++)vals.push(S.data[i]||-120);vals.sort((a,b)=>a-b);return vals[Math.floor(vals.length*.55)]??S.noiseFloor;
-}
-function toneMetrics(sig){
- const [f1,f2]=sigFreq(sig),a=bandPeak(f1),b=bandPeak(f2),fa=localBandFloor(f1),fb=localBandFloor(f2);
- const sa=a-fa,sb=b-fb;return {a,b,fa,fb,sa,sb,score:Math.min(sa,sb),strong:Math.max(sa,sb),present:(sa>9&&sb>6)||(sb>9&&sa>6)};
-}
-function toneLevel(sig){return toneMetrics(sig).score}
-function occupied(sig){return toneMetrics(sig).present}
-function isMobile(){return matchMedia('(max-width:760px)').matches}
-function openDrawer(){if(!isMobile())return;els.side.classList.add('open');els.drawerOverlay.classList.add('open');els.drawerOverlay.setAttribute('aria-hidden','false')}
-function closeDrawer(){els.side.classList.remove('open');els.drawerOverlay.classList.remove('open');els.drawerOverlay.setAttribute('aria-hidden','true')}
-function rxSnapshot(){
- if(!S.running||!S.an)return {best:null,bestScore:-99,peaks:[]};
- const found=[];for(let sig=0;sig<FCOUNT;sig++){const m=toneMetrics(sig);if(m.strong>5)found.push({sig,...m})}
- found.sort((a,b)=>b.score-a.score);return {best:found[0]||null,bestScore:found[0]?.score??-99,peaks:found.slice(0,4)};
-}
-function updateRxDiagnostics(){
- if(!els.micBadge)return;const age=S.lastAudioCallback?Date.now()-S.lastAudioCallback:Infinity;
- const ctx=S.ctx?.state||'—',track=S.stream?.getAudioTracks?.()[0],live=!!track&&track.readyState==='live'&&!track.muted&&age<1800;
- els.micBadge.textContent=live?`MIC vivo ${ctx}`:`MIC fermo ${ctx}`;els.micBadge.className='badge '+(live?'ok':'warn');
- const snap=rxSnapshot(),best=snap.best;els.rxBadge.textContent=best?`RX firma ${best.sig}`:'RX ascolto';els.rxBadge.className='badge '+(best?.present?'ok':'');
- els.rxDiag.textContent=`callback ${Number.isFinite(age)?Math.round(age)+' ms':'—'} · picco ${S.rxPeakDb.toFixed(1)} dB · ${snap.peaks.map(x=>`${x.sig}:${x.score.toFixed(1)}`).join(' ')||'nessuna firma'}`;
- els.testTone.disabled=!S.running||!S.calibrated;
-}
-function render(){updateRxDiagnostics();els.calBar.style.width=(S.calibrated?100:Math.min(100,S.noise.length/28*100))+'%';els.calBadge.textContent=S.calibrated?'calibrato':`calibrazione ${Math.round(S.noise.length/28*100)}%`;els.calBadge.className='badge '+(S.calibrated?'ok':'warn');els.join.disabled=!S.running||!S.calibrated;els.send.disabled=!S.running||!S.calibrated||S.nodes.size===0;els.signature.textContent=`firma ${S.signature} · ${sigFreq(S.signature).join(' + ')} Hz`;els.channel.textContent=Date.now()<S.busyUntil?'riservato':'libero';els.nodes.innerHTML='';for(const [id,n] of S.nodes){const d=document.createElement('div');d.className='node';d.innerHTML=`<span><b>${n.name||'Nodo '+id}</b><div class="sub">firma ${id} · ${Math.round((Date.now()-n.last)/1000)}s</div></span><span>${n.confirmed?'●':'◐'}</span>`;d.onclick=()=>{S.selected=id;els.chatTitle.textContent=n.name||'Nodo '+id;els.chatSub.textContent='comunicazione cifrata diretta';render();closeDrawer()};els.nodes.appendChild(d)}if(!S.nodes.size)els.nodes.innerHTML='<div class="empty">Nessun nodo acquisito</div>'}
-async function loadGG(){if(S.gg)return;for(const u of ['https://cdn.jsdelivr.net/npm/ggwave@0.4.0/ggwave.js','https://unpkg.com/ggwave@0.4.0/ggwave.js']){try{await new Promise((ok,no)=>{const s=document.createElement('script');s.src=u;s.onload=ok;s.onerror=no;document.head.appendChild(s)});break}catch{}}if(!window.ggwave_factory)throw Error('ggwave non disponibile');S.gg=await window.ggwave_factory();const p=S.gg.getDefaultParameters();p.payloadLength=64;S.modem=S.gg.init(p);log('ggwave veloce pronto')}
-function profile(){return S.gg.ProtocolId?.GGWAVE_PROTOCOL_AUDIBLE_FAST??S.gg.ProtocolId?.GGWAVE_PROTOCOL_AUDIBLE_NORMAL??1}
-async function deriveKey(){const material=await crypto.subtle.importKey('raw',te.encode(els.password.value||els.network.value),'PBKDF2',false,['deriveKey']);S.key=await crypto.subtle.deriveKey({name:'PBKDF2',salt:te.encode('AudioMesh7:'+els.network.value),iterations:120000,hash:'SHA-256'},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}
-async function encryptPayload(obj){const iv=crypto.getRandomValues(new Uint8Array(12)),plain=te.encode(JSON.stringify(obj));const cipher=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},S.key,plain));const out=new Uint8Array(64);out[0]=iv.length;out.set(iv,1);out.set(cipher.slice(0,51),13);return out}
-async function decryptPayload(data){const iv=data.slice(1,13),cipher=data.slice(13);let end=cipher.length;while(end>16&&cipher[end-1]===0)end--;const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv},S.key,cipher.slice(0,end));return JSON.parse(td.decode(plain))}
-async function pulse(type,dst=15,flags=0){if(!S.running||!S.calibrated)return false;if(Date.now()<S.busyUntil&&type!==TYPE.ACK&&type!==TYPE.GRANT&&type!==TYPE.PROVIDER&&type!==TYPE.COLLISION)return false;const nonce=(++S.nonce)&7,a=frame(type,S.signature,dst,nonce,flags);S.tx=true;S.busyUntil=Date.now()+a.length*SLOT_MS+250;const t0=S.ctx.currentTime+.05,[f1,f2]=sigFreq(S.signature);for(let i=0;i<a.length;i++){if(!a[i])continue;for(const f of [f1,f2]){const o=S.ctx.createOscillator(),g=S.ctx.createGain(),t=t0+i*SLOT_MS/1000;o.frequency.value=f;g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.13,t+.008);g.gain.setValueAtTime(.13,t+(SLOT_MS-12)/1000);g.gain.exponentialRampToValueAtTime(.0001,t+SLOT_MS/1000);o.connect(g);g.connect(S.ctx.destination);o.start(t);o.stop(t+SLOT_MS/1000+.01)}}setTimeout(()=>{S.tx=false;render()},a.length*SLOT_MS+120);log(`TX ${TYPE_NAME[type]} ${S.signature}→${dst} n${nonce}`);return nonce}
-function decodeTick(){
- if(!S.running||S.tx)return;const snap=rxSnapshot();
- if(snap.best?.present){if(S.rxCandidate!==snap.best.sig){S.rxCandidate=snap.best.sig;S.rxCandidateAt=Date.now();log(`RX firma candidata ${snap.best.sig} · score ${snap.best.score.toFixed(1)} dB`)}}
- else if(Date.now()-S.rxCandidateAt>500)S.rxCandidate=null;
- for(let sig=0;sig<FCOUNT;sig++){
-  let d=S.decoders.get(sig);if(!d)d={samples:[],count:0,phases:Array.from({length:4},()=>[])};
-  d.samples.push(occupied(sig)?1:0);if(d.samples.length>4)d.samples.shift();d.count++;
-  if(d.samples.length===4){for(let phase=0;phase<4;phase++){if(d.count%4!==phase)continue;const bit=d.samples.reduce((a,b)=>a+b,0)>=2?1:0,q=d.phases[phase];q.push(bit);if(q.length>FRAME_BITS)q.shift();if(q.length===FRAME_BITS){const packet=parseFrame(q);if(packet&&packet.src===sig){d.phases=Array.from({length:4},()=>[]);handleTone(packet);break}if(PRE.every((b,i)=>q[i]===b))S.rxFrameErrors++}}}
-  S.decoders.set(sig,d)
- }
-}
-function handleTone(p){S.lastActivity=Date.now();S.busyUntil=Math.max(S.busyUntil,Date.now()+800);log(`RX ${TYPE_NAME[p.type]} ${p.src}→${p.dst} n${p.nonce}`,'ok');
- if(p.type===TYPE.JOIN){if(S.nodes.has(p.src)||p.src===S.signature){pulse(TYPE.COLLISION,p.src,p.nonce);return}const delay=180+S.signature*35;setTimeout(()=>pulse(TYPE.PROVIDER,p.src,p.nonce),delay);return}
- if(p.type===TYPE.PROVIDER&&p.dst===S.signature){if(!S.provider){S.provider=p.src;setTimeout(()=>pulse(TYPE.JOIN_OK,p.src,p.nonce),180)}return}
- if(p.type===TYPE.JOIN_OK&&p.dst===S.signature){S.nodes.set(p.src,{name:'Nodo '+p.src,last:Date.now(),confirmed:true});setTimeout(()=>sendIdentity(p.src),250);return}
- if(p.type===TYPE.COLLISION&&p.dst===S.signature){S.signature=candidate((S.signature+1)%FCOUNT);S.provider=null;render();setTimeout(()=>pulse(TYPE.JOIN,15),350);return}
- if(p.type===TYPE.REQUEST&&p.dst===S.signature){S.nodes.set(p.src,{...(S.nodes.get(p.src)||{}),last:Date.now(),confirmed:true});setTimeout(()=>pulse(TYPE.GRANT,p.src,p.nonce),170);return}
- if(p.type===TYPE.GRANT&&S.pending&&p.dst===S.signature){S.busyUntil=Date.now()+9000;setTimeout(()=>sendData(S.pending,p.src),220);return}
- if(p.type===TYPE.ACK&&p.dst===S.signature){if(S.pending){addMessage(S.pending.text,true,'consegnato');S.pending=null}S.busyUntil=Date.now()+200;render();return}
-}
-async function sendIdentity(dst){await sendData({text:JSON.stringify({kind:'identity',id:S.nodeId,name:els.name.value||'Dispositivo',sig:S.signature}),dst},dst)}
-async function sendData(rec,dst){await loadGG();if(!S.key)await deriveKey();const data=await encryptPayload({v:7,src:S.signature,dst,text:rec.text,id:crypto.randomUUID().slice(0,8)});const wave=S.gg.encode(S.modem,data,profile(),10),samples=new Float32Array(wave.buffer,wave.byteOffset,wave.byteLength/4),buf=S.ctx.createBuffer(1,samples.length,S.ctx.sampleRate);buf.getChannelData(0).set(samples);const source=S.ctx.createBufferSource();source.buffer=buf;source.connect(S.ctx.destination);source.start();S.busyUntil=Date.now()+buf.duration*1000+900;log(`TX DATA cifrato veloce → ${dst} · ${buf.duration.toFixed(2)}s`)}
-async function onAudio(e){if(!S.running)return;S.lastAudioCallback=Date.now();const input=e.inputBuffer.getChannelData(0);let peak=0;for(const v of input)peak=Math.max(peak,Math.abs(v));S.rxPeakDb=peak>0?20*Math.log10(peak):-120;if(!S.tx&&S.calibrated&&S.modem){try{const i8=new Int8Array(input.length);for(let i=0;i<input.length;i++)i8[i]=Math.max(-127,Math.min(127,input[i]*110));const r=S.gg.decode(S.modem,i8);if(r&&r.length){try{const o=await decryptPayload(new Uint8Array(r));handleData(o)}catch(e){log('DATA non autenticato/decifrabile','')}}}catch{}}}
-async function handleData(o){if(o.kind==='identity'){S.nodes.set(o.sig,{name:o.name,last:Date.now(),confirmed:true});render();pulse(TYPE.ACK,o.sig,0);return}if(o.dst!==S.signature&&o.dst!==15)return;addMessage(o.text,false,'ricevuto');pulse(TYPE.ACK,o.src,0)}
-function addMessage(text,mine,status){if(els.messages.querySelector('.empty'))els.messages.innerHTML='';const b=document.createElement('div');b.className='bubble '+(mine?'mine':'');b.innerHTML=`<div>${text}</div><div class="meta">${new Date().toLocaleTimeString()} · ${status}</div>`;els.messages.appendChild(b);els.messages.scrollTop=els.messages.scrollHeight}
-async function start(){if(S.running){stop();return}save();await loadGG();await deriveKey();S.ctx=new(window.AudioContext||window.webkitAudioContext)({sampleRate:48000});await S.ctx.resume();S.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1}});S.src=S.ctx.createMediaStreamSource(S.stream);S.an=S.ctx.createAnalyser();S.an.fftSize=4096;S.data=new Float32Array(S.an.frequencyBinCount);S.src.connect(S.an);const proc=S.ctx.createScriptProcessor(4096,1,1);proc.onaudioprocess=onAudio;S.src.connect(proc);proc.connect(S.ctx.destination);S.proc=proc;S.running=true;S.signature=candidate();S.noise=[];S.calibrated=false;S.lastAudioCallback=Date.now();S.rxPeakDb=-120;S.rxCandidate=null;S.rxFrameErrors=0;setState('CALIBRATION');const cal=setInterval(()=>{if(!S.running){clearInterval(cal);return}S.an.getFloatFrequencyData(S.data);const v=Array.from(S.data.slice(70,320)).sort((a,b)=>a-b)[120]||-100;if(Date.now()>S.busyUntil){S.noise.push(v);if(S.noise.length>=28){S.noiseFloor=statistics(S.noise);S.calibrated=true;clearInterval(cal);setState('IDLE');log(`Calibrazione passiva: floor ${S.noiseFloor.toFixed(1)} dB`,'ok')}render()}},420);S.tick=setInterval(()=>{if(S.an){S.an.getFloatFrequencyData(S.data);decodeTick()}render()},TICK_MS);S.watch=setInterval(watchdog,1000);log(`AudioMesh ${VERSION} avviata`);render()}
-function statistics(a){const b=[...a].sort((x,y)=>x-y);return b[Math.floor(b.length*.7)]}
-async function playTestTone(){
- if(!S.running||!S.calibrated)return;
- if(S.testSource){try{S.testSource.stop()}catch{}S.testSource=null;els.testTone.textContent='Test tono continuo';return}
- await S.ctx.resume();const [f1,f2]=sigFreq(S.signature),gain=S.ctx.createGain();gain.gain.value=.12;gain.connect(S.ctx.destination);
- const oscs=[f1,f2].map(f=>{const o=S.ctx.createOscillator();o.frequency.value=f;o.connect(gain);o.start();return o});
- S.testSource={stop(){oscs.forEach(o=>{try{o.stop()}catch{}});gain.disconnect()}};els.testTone.textContent='Ferma tono test';log(`TEST tono continuo firma ${S.signature} · ${f1}+${f2} Hz`);
-}
-async function watchdog(){
- if(!S.running)return;const age=Date.now()-S.lastAudioCallback;if(S.ctx?.state!=='running'){try{await S.ctx.resume();log('AudioContext riattivato dal watchdog')}catch{}}
- if(age>2500)log(`RX bloccato · nessuna callback da ${Math.round(age/1000)}s`,'warn');updateRxDiagnostics();
-}
-function stop(){S.running=false;clearInterval(S.tick);clearInterval(S.watch);if(S.testSource){try{S.testSource.stop()}catch{}S.testSource=null}S.stream?.getTracks().forEach(t=>t.stop());S.proc?.disconnect();S.ctx?.close();setState('OFF');els.start.textContent='Avvia'}
-async function requestJoin(){if(!S.calibrated)return;closeDrawer();S.provider=null;for(let off=0;off<FCOUNT;off++){const c=candidate(off);if(!occupied(c)&&!S.nodes.has(c)){S.signature=c;break}}render();await pulse(TYPE.JOIN,15)}
-function send(){const text=els.text.value.trim();closeDrawer();if(!text||S.selected===15)return;S.pending={text,dst:S.selected};els.text.value='';pulse(TYPE.REQUEST,S.selected,0)}
-els.start.onclick=start;els.testTone.onclick=playTestTone;els.join.onclick=requestJoin;els.send.onclick=send;els.text.onkeydown=e=>{if(e.key==='Enter')send()};
-els.menu.onclick=openDrawer;els.drawerClose.onclick=closeDrawer;els.drawerOverlay.onclick=closeDrawer;
-let touchStartX=null,touchStartY=null;
-els.side.addEventListener('touchstart',e=>{const t=e.touches[0];touchStartX=t.clientX;touchStartY=t.clientY},{passive:true});
-els.side.addEventListener('touchend',e=>{if(touchStartX===null)return;const t=e.changedTouches[0],dx=t.clientX-touchStartX,dy=Math.abs(t.clientY-touchStartY);if(dx<-55&&dy<70)closeDrawer();touchStartX=touchStartY=null},{passive:true});
-window.addEventListener('resize',()=>{if(!isMobile())closeDrawer()});window.addEventListener('pagehide',stop);render();log(`AudioMesh ${VERSION} pronta · controllo tonale distribuito · ggwave solo dati`);
-})();
-</script>
-</body></html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0c4d40" />
+    <meta name="description" content="Chat testuale locale che comunica attraverso suono con ggwave." />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>AudioChat v10</title>
+    <script type="module" crossorigin src="./assets/index-BfSBzTBW.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-DrFX_olX.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

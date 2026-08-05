@@ -1,44 +1,69 @@
-# AudioMesh
+# AudioChat v10
 
-AudioMesh is an experimental source-available acoustic mesh network that communicates through microphones and loudspeakers without Internet, Wi-Fi, Bluetooth, SIM cards or a central server.
+AudioChat e una mesh acustica sperimentale che usa microfono e altoparlante
+per scambiare messaggi e file localmente, senza Internet, Wi-Fi, Bluetooth,
+SIM o server centrale. Il modem e [ggwave](https://github.com/ggerganov/ggwave);
+il protocollo di rete, arbitraggio e trasferimento e implementato da AudioChat.
 
-## Live demo
+## Versione corrente
 
-`https://alessandrogabe.github.io/CHATGPT/`
+Questo repository e allineato alla build **AudioChat v10 fast file transfer**
+pubblicata su:
 
-## AudioMesh 6.1.1
+- https://audiochat-mesh.alegabe81.chatgpt.site/
+- https://alessandrogabe.github.io/CHATGPT/
 
-- encrypted and authenticated AES-GCM frames
-- PBKDF2 master-key derivation and hourly HKDF session-key rotation
-- uniform fixed-length 64-character acoustic frames
-- network name, packet type, identities and payload never transmitted in clear text
-- replay protection
-- up to 10 local node addresses
-- coordinator election and shared time slots
-- acoustic carrier sensing before every transmission
-- random backoff after carrier release
-- RESERVE/RELEASE leases for long transmissions
-- presence confirmation
-- per-fragment message acknowledgements
-- persistent delayed-delivery queue
-- real-time network and device dashboard
-- integrated implementation guide
-- corrected 16-bit message IDs, reservation deduplication and broadcast completion
+La pagina GitHub Pages usa gli stessi asset statici generati dalla sorgente v10.
 
-The implementation currently uses ggwave as the modem layer. The mesh, medium-access, security and application layers are independent concepts and can be ported to ESP32, Raspberry Pi, native mobile applications or other acoustic modems.
+## Caratteristiche
 
-## Experimental status
+- discovery event-driven con elezione deterministica del coordinatore;
+- JOIN/WELCOME/SYNC e roster multi-device con canale normalmente silenzioso;
+- frame base da 16 byte e frame esteso da 32 byte;
+- profili acustici Compatibile, Banda bassa, Veloce e Turbo con fallback;
+- coda FIFO persistente in IndexedDB per i messaggi non ancora consegnati;
+- rete e password trasformate tramite PBKDF2-HMAC-SHA-256, 150.000 iterazioni;
+- file fino a 512 KiB protetti end-to-end con AES-256-GCM;
+- compressione GZIP prima della cifratura quando riduce realmente i byte;
+- trasferimento file `window-v1` con burst adattivi da 8 a 12 blocchi;
+- ACK bitmap cumulativi e ritrasmissione dei soli blocchi mancanti;
+- fallback al precedente ACK singolo quando la finestra non viene negoziata;
+- prenotazione esclusiva del canale durante il file transfer;
+- ggwave/WASM incluso negli asset statici, senza CDN a runtime.
 
-AudioMesh 6.1.1 is a functional research prototype. Its JavaScript syntax and encrypted frame construction were tested, but it has not undergone an independent security audit or broad hardware interoperability testing. Do not yet use it for safety-critical or highly confidential communication.
+I messaggi testuali v10 non sono cifrati; i file sono invece cifrati e
+autenticati integralmente prima della trasmissione.
 
-## Documentation
+## Trasferimento file v10-fast
 
-See [`PROTOCOL.md`](PROTOCOL.md).
+Il file viene prima compresso con GZIP solo se la compressione fa risparmiare
+almeno l'overhead previsto, quindi cifrato con AES-GCM e suddiviso in blocchi
+FILE_DATA. Il mittente invia una finestra iniziale di 8 blocchi senza attendere
+un ACK tra un blocco e il successivo. Il ricevente risponde alla richiesta di
+riscontro con un bitmap a 16 bit. Una finestra pulita cresce 8 -> 10 -> 12;
+in caso di perdita torna a 8 e vengono ritrasmessi solo i blocchi mancanti.
 
-## License
+Se il collegamento resta instabile, AudioChat rinegozia un profilo acustico piu
+robusto e riprende dal primo blocco mancante. Il vecchio percorso stop-and-wait
+resta disponibile come fallback di compatibilita.
 
-Personal, non-commercial use is free under the [AudioMesh Personal Use License 1.0](LICENSE).
+## Protocollo
 
-Business, professional, or commercial use requires a separate paid commercial license. Pricing, scope, and terms are agreed case by case with the copyright holder.
+La specifica wire v10 completa e in [`PROTOCOL.md`](PROTOCOL.md). L'header di
+riferimento per implementazioni native/ESP32 e in
+[`protocol/audiochat_protocol.h`](protocol/audiochat_protocol.h).
+
+## Stato sperimentale
+
+AudioChat e un prototipo sperimentale e non ha subito un audit di sicurezza
+indipendente ne una validazione estesa su hardware eterogeneo. Non va ancora
+usato per comunicazioni safety-critical o ad alta confidenzialita.
+
+## Licenza
+
+L'uso personale e non commerciale e gratuito secondo [`LICENSE`](LICENSE).
+Qualsiasi uso aziendale, professionale o commerciale richiede una licenza
+commerciale separata a pagamento; prezzo, condizioni e supporto vengono
+concordati caso per caso con il titolare del copyright.
 
 Copyright (c) 2026 Alessandro Gabellotto.
