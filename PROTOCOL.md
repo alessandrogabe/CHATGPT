@@ -80,4 +80,4 @@ The implementation is experimental and has not undergone an independent cryptogr
 
 ## License
 
-MIT License. See `LICENSE`.
+Personal, non-commercial use is free under the AudioMesh Personal Use License 1.0. Business, professional, or commercial use requires a separate paid commercial license; pricing and terms are agreed case by case. See `LICENSE`.
