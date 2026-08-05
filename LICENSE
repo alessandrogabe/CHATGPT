@@ -1,21 +1,63 @@
-MIT License
+AudioMesh Personal Use License 1.0
 
 Copyright (c) 2026 Alessandro Gabellotto
+All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. Personal, non-commercial use
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Subject to the terms below, the copyright holder grants natural persons a
+non-exclusive, worldwide, royalty-free license to access, use, run, reproduce,
+and modify this software and its associated documentation (the "Software")
+solely for personal, private, non-commercial purposes.
+
+Source code and modified versions may be shared only for personal,
+non-commercial purposes, provided that this license and all copyright notices
+remain included and no fee or other commercial consideration is charged.
+
+2. Business and commercial use
+
+No business, professional, or commercial use is granted by this license.
+Any such use requires a separate paid commercial license agreed in writing
+with the copyright holder before use.
+
+Business or commercial use includes, without limitation:
+
+- use by or on behalf of a company, business, employer, sole trader,
+  freelancer, professional practice, or other commercial organization;
+- use in internal business operations;
+- use in, with, or to provide a product or service, whether paid or unpaid;
+- use for a client or customer; and
+- use intended to generate revenue or other commercial advantage.
+
+Commercial license pricing, scope, conditions, support, and other terms are
+not set by this repository and will be agreed case by case with the copyright
+holder.
+
+3. No commercial redistribution or sublicensing
+
+The personal license does not permit selling, licensing, sublicensing,
+commercially distributing, or otherwise commercially exploiting the Software
+or modified versions of it.
+
+4. Notices and trademarks
+
+All copies or substantial portions of the Software must retain this license
+and the copyright notice above. No trademark, trade-name, logo, or branding
+rights are granted by this license.
+
+5. Termination
+
+The rights granted by this license terminate automatically upon breach of its
+terms. Use after termination requires permission from the copyright holder.
+
+6. Disclaimer
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For business or commercial licensing, contact the copyright holder to agree
+pricing and terms.
