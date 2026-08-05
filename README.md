@@ -1,6 +1,6 @@
 # AudioMesh
 
-AudioMesh is an experimental open-source acoustic mesh network that communicates through microphones and loudspeakers without Internet, Wi-Fi, Bluetooth, SIM cards or a central server.
+AudioMesh is an experimental source-available acoustic mesh network that communicates through microphones and loudspeakers without Internet, Wi-Fi, Bluetooth, SIM cards or a central server.
 
 ## Live demo
 
@@ -37,6 +37,8 @@ See [`PROTOCOL.md`](PROTOCOL.md).
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+Personal, non-commercial use is free under the [AudioMesh Personal Use License 1.0](LICENSE).
+
+Business, professional, or commercial use requires a separate paid commercial license. Pricing, scope, and terms are agreed case by case with the copyright holder.
 
 Copyright (c) 2026 Alessandro Gabellotto.
